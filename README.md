@@ -77,3 +77,34 @@ git push
 ```
 
 推送后，重新点上面的导入链接即可在 Scripting 中拉取最新版本（导入会覆盖同名脚本）。`.scripting` 打包文件已在 `.gitignore` 中忽略，不纳入版本控制。
+
+### 版本控制工作流（控制导入哪个版本 / 改坏可回退）
+
+> Scripting 从仓库导入时拉取的是 **`main` 分支的当前内容**。所以「线上版本」=「`main` 上是什么」。
+> 只有 `push main` 之后导入才会变；本地 `dev` 怎么改都不影响线上。
+
+- **`dev` 分支**：日常开发，随便改、随便 commit，改坏了也没关系（它不是导入源）。
+- **`main` 分支**：只放确认可用的版本，是 GitHub 导入源。每次发布打一个版本 tag。
+
+**日常开发（在 dev）**
+```bash
+git checkout dev
+# 改 page/ class/ context/ 源码
+git add -A && git commit -m "改动说明"
+```
+
+**发布一个新版本**（把 dev 当前状态推成线上版本，并打 tag）
+```bash
+sh release.sh v1.0.1 "本次更新说明"
+# 脚本只在本地合并到 main + 打 tag，不会自动 push
+# 确认无误后，手动 push 才真正上线：
+git push origin main --follow-tags
+```
+
+**改坏了，回退到旧版本**
+```bash
+sh rollback.sh v1.0.0          # 把 main 内容退回 v1.0.0（前进式，不改写历史）
+git push origin main           # 确认后手动 push，导入即回到旧版
+```
+
+回退采用「用旧版本内容生成一个新提交」的方式，**不需要 force push**，远程历史永远完整、安全，随时可再前进或再回退。`release.sh` / `rollback.sh` 是本地辅助脚本，已在 `.gitignore` 中忽略。
