@@ -1,0 +1,44 @@
+{
+  "author" : {
+    "homepage" : "https:\/\/github.com\/001ProMax",
+    "email" : null,
+    "name" : "001"
+  },
+  "remoteResource" : null,
+  "localizedNames" : {
+    "pt" : "",
+    "fr" : "",
+    "en" : "",
+    "it" : "",
+    "ru" : "",
+    "ja" : "",
+    "zh" : "",
+    "de" : "",
+    "es" : ""
+  },
+  "name" : "Pong",
+  "localizedDescriptions" : {
+    "pt" : "",
+    "fr" : "",
+    "en" : "Komari & Nezha probe dashboard on a 3D map — live node status, metrics and geo distribution.",
+    "it" : "",
+    "ru" : "",
+    "ja" : "",
+    "zh" : "在 3D 地图上查看 Komari 与哪吒探针：节点实时状态、负载指标与地理分布。",
+    "de" : "",
+    "es" : ""
+  },
+  "intentInputTypes" : [
+
+  ],
+  "description" : "Komari & Nezha probe dashboard — live server monitoring on a 3D world map.",
+  "contributors" : [
+
+  ],
+  "entry" : "index.tsx",
+  "iconImage" : null,
+  "version" : "1.0.0",
+  "runInApp" : false,
+  "color" : "rgba(0, 198, 165,1)",
+  "icon" : "network"
+}

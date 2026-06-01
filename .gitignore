@@ -1,0 +1,14 @@
+# macOS / iOS
+.DS_Store
+
+# 构建产物 / 打包文件（源码用 git 管，不提交打好的 .scripting zip）
+*.scripting
+*.zip
+
+# 编辑器
+.vscode/
+.idea/
+
+# 临时
+*.log
+node_modules/
