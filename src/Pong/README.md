@@ -1,110 +1,113 @@
-# Pong — Komari 探针面板
+# Pong — Komari & 哪吒(Nezha)探针面板
 
-参照 [vPings](https://apps.apple.com/us/app/vpings/id6479573031) 实现的 Scripting (iOS) 应用：在 3D 世界地图上展示 Komari 探针的节点实时状态、负载指标与地理分布。原 Demo 的「哪吒探针」已替换为 **Komari 探针**。
+一个运行在 [Scripting](https://scripting.fun)(iOS)里的服务器探针监控面板：在 3D 世界地图上展示节点的实时状态、负载指标与地理分布，并提供完整的节点管理与面板管理功能。**同时支持 Komari 与哪吒(Nezha v1)两种探针后端**，UI 按各后端的实际能力自动门控显示。
 
-## 功能
+参照 [vPings](https://apps.apple.com/us/app/vpings/id6479573031) 的形态实现。
 
-- **地图视图**：按节点 GeoIP 地区在 3D 卫星地图上打点，在线绿色、离线灰色，同地区节点自动散开避免重叠。
-- **实时数据**：通过 WebSocket `ws(s)://host/api/clients` 每 2 秒拉取一次实时指标，断线自动重连。
-- **节点列表**：所有节点按在线优先排序，行内显示 CPU / 内存环形仪表与上下行速率。
-- **节点详情**：实时负载仪表（CPU/内存/磁盘/交换）、网络速率、连接数、进程数、运行时间，以及硬件与计费信息。
-- **多探针管理**：在设置里添加/编辑/删除/切换多个 Komari 面板地址，支持「测试连接」（读取 `/api/version`）。
+## 功能总览
 
-## Komari API 契约
+### 监控
+- **3D 地图视图**：按节点 GeoIP 地区在卫星地图上打点，颜色按该地区节点的最重负载着色（在线绿/黄/橙/红、离线灰），同地区多节点自动聚合为一个标记。
+- **实时数据**：通过 WebSocket（+ 必要时 HTTP 轮询）每 2 秒拉取一次实时指标，断线自动重连；会话过期自动重新登录。
+- **节点列表**：在线优先排序，行内显示 CPU / 内存仪表、上下行速率、以及一段开页即回填的 CPU 负载迷你曲线（sparkline）。
+- **搜索与分类**：列表支持搜索、按在线/离线/地区/标签筛选，以及本地自定义分组（创建/改名/删除/分配节点）。
+- **节点详情**：实时负载仪表（CPU/内存/磁盘/交换）、网络速率、连接数、进程数、运行时间；历史负载分指标卡片（多时间范围）；网络延迟（Ping）多线路折线图（可逐线显隐）；硬件信息、IP 地址卡片、计费信息。
+- **服务可用率**（哪吒）：服务监控的 30 天可用率热力墙 + 当前延迟。
 
+### 多探针管理
+- 在设置里添加 / 编辑 / 删除 / 切换多个探针实例，每个实例独立选择后端类型（Komari / 哪吒）。
+- 支持「测试连接」（读取版本接口）。
+- 鉴权方式：无鉴权（访客）/ Token（Komari API Key、哪吒 Access Token）/ 账号密码登录（含两步验证，自动续期会话）。
+
+### 节点 & 面板管理（按后端能力门控）
+进入「管理面板」后，仅显示当前探针后端支持的功能：
+
+| 功能 | Komari | 哪吒 |
+|---|:--:|:--:|
+| 新建节点（含装机引导） | ✓ | — |
+| 删除 / 编辑节点 | ✓ | ✓ |
+| 告警规则 | — | ✓ |
+| 通知渠道 | — | ✓ |
+| 计划任务（cron） | — | ✓ |
+| 命令执行 | ✓（实时多机） | ✓（经计划任务） |
+| 用户管理 | — | ✓ |
+| API Tokens | — | ✓ |
+| 会话管理 | ✓ | — |
+| 站点设置（只读） | ✓ | ✓ |
+
+> 管理操作直接写入面板，且部分不可逆（删除类），请确认所用凭证具备对应权限。
+
+## 后端 API 契约
+
+两个后端的差异完全封装在各自的适配器里，上层只认 `types.ts` 的规范模型。
+
+**Komari**
 | 用途 | 端点 |
 |---|---|
-| 静态节点列表 | `GET {baseUrl}/api/nodes` → `{status, data: NodeBasicInfo[]}` |
-| 实时数据 | WebSocket `{ws}://{host}/api/clients`，连接后每 2s 发送文本 `get`，回 `{status, data:{online[], data:{[uuid]: LiveRecord}}}` |
+| 静态节点列表 | `GET {baseUrl}/api/nodes` |
+| 实时数据 | WebSocket `{ws}://{host}/api/clients`（连接后周期性发送 `get`） |
 | 版本探测 | `GET {baseUrl}/api/version` |
+| 负载 / Ping 历史、节点管理、命令执行、会话等 | 对应 `/api/...` 端点 |
+
+**哪吒 Nezha v1**
+| 用途 | 端点 |
+|---|---|
+| 实时数据 | WebSocket（实时帧同时携带完整节点列表，访客模式下据此构建列表） |
+| 服务监控总览 | `GET {baseUrl}/api/v1/service`（含 30 天 up/down/delay） |
+| 告警 / 通知 / 计划任务 / 用户 / Token / 设置 | 对应 `/api/v1/...` 端点 |
+
+时间范围按后端能力不同：Komari 支持 1h/6h/1d/7d，哪吒支持 1d/7d/30d。
 
 ## 架构（S.U.P.E.R）
 
 ```
-index.tsx                 入口：Navigation.present(<View/>)
+index.tsx                  入口：Navigation.present(<View/>)
 page/
-  index.tsx               根布局：MonitorProvider > MapSelectionProvider > ZStack(Map + Sheet)
-  map.tsx                 地图 + Marker（消费 Monitor context）
-  sheet.tsx               悬浮控件：状态总览 + 选中节点入口
-  list.tsx                节点列表（在线优先，行内仪表）
-  detail.tsx              单节点详情（实时仪表 + 硬件/计费）
-  settings.tsx            探针 CRUD + 测试连接
+  index.tsx                根布局：MonitorProvider > MapSelectionProvider > ZStack(Map + Sheet)
+  map.tsx                  3D 地图 + Marker（消费 Monitor context）
+  sheet.tsx                悬浮控件：状态总览 + 进入列表 / 选中地区
+  list.tsx                 节点列表（搜索 / 分类 / 自定义分组 / 行内仪表 + sparkline）
+  detail.tsx               单节点详情（实时仪表 + 历史负载 + Ping 折线 + 硬件 / IP / 计费）
+  services.tsx             服务可用率热力墙（哪吒）
+  settings.tsx             探针实例 CRUD + 测试连接 + 进入管理面板
+  addnode.tsx              节点管理：列表 / 删除 / 新建（Komari）/ 装机引导
+  groups.tsx               本地自定义分组管理
+  admin.tsx                管理面板 HUB（按 caps 门控列出功能）
+  alerts / notifications / cron / exec / users / tokens / sessions / settings_readonly.tsx
+                           各管理功能页面
 context/
-  Monitor.tsx             唯一数据源：节点列表 + 实时记录 + 连接状态（单向流）
-  MapSelection.tsx        地图选中态绑定
-class/                    纯逻辑层（无 UI），已通过 tsc 类型检查 + 运行时单测
-  types.ts                所有数据契约（Port）
-  server.ts               Komari 数据访问：fetchNodes / fetchVersion / buildPins / LiveClient(WebSocket)
-  config.ts               探针配置持久化（Storage）
-  geo.ts                  region(ISO码/旗帜emoji/中英名) → 经纬度
-  coords_data.ts          ISO-3166 国家质心坐标表（自动生成）
-  format.ts               纯展示格式化（字节/速率/百分比/计费…）
+  Monitor.tsx              唯一数据源：节点列表 + 实时记录 + 历史 + 地图标记 + 连接状态（单向流）
+  MapSelection.tsx         地图选中态绑定
+class/                     纯逻辑层（无 UI），通过 tsc 类型检查 + 运行时单测
+  types.ts                 所有数据契约 + 后端能力描述（Port）
+  backend.ts               Backend 抽象接口 + 各后端 caps + 适配器注册工厂
+  komari.ts / nezha.ts     两个后端适配器（实现 Backend 接口）
+  nezha_transforms.ts      哪吒纯数据转换（无 I/O）
+  server.ts                后端门面：分派到适配器 + 后端中立的视图助手（地图打点 / 着色）
+  config.ts                探针实例配置持久化（Storage）
+  filter.ts / groups.ts    列表筛选 / 自定义分组逻辑
+  geo.ts / coords_data.ts  地区码 → 经纬度 / 旗帜 / 中英名
+  ping.ts / loadchart.ts / uptime.ts   Ping 折线 / 历史负载 / 可用率计算
+  format.ts / ui.ts        展示格式化 / UI 尺寸适配
 ```
 
-- **S** 单一职责：每个模块只做一件事（网络/配置/地理/格式化/状态/各页面）。
-- **U** 单向数据流：`server.ts` → `Monitor` observables → 各视图（只读），视图从不直接碰 fetch/WebSocket。
-- **P** 接口先行：所有跨模块数据走 `types.ts` 契约；视图依赖 `useMonitor()` 而非实现。
-- **E** 无硬编码：探针地址全部来自用户配置（`Storage`），代码内无任何固定 URL。
-- **R** 可替换：`LiveClient` 可整体换成 SSE/轮询而不影响 UI；坐标表/格式化均可独立替换。
+- **S** 单一职责：每个模块只做一件事（网络 / 配置 / 地理 / 格式化 / 状态 / 各页面）。
+- **U** 单向数据流：适配器 → `Monitor` observables → 各视图（只读），视图从不直接碰 fetch / WebSocket。
+- **P** 接口先行：所有跨模块数据走 `types.ts` 契约；视图依赖 `useMonitor()` 与 `Backend` 接口，而非具体实现。
+- **E** 无硬编码：探针地址 / 凭证全部来自用户配置（`Storage`），代码内无任何固定 URL。
+- **R** 可替换：新增第三种探针后端 = 新增一个适配器文件 + 一次 `registerBackend` 注册，上层零改动。
+
+## 性能要点
+
+实时帧每 2 秒驱动一次更新，热路径做了针对性优化：节点用 uuid 索引做 O(1) 查找；在线集合与地图标记按内容签名门控，成员/可见内容未变时不触发重渲染；列表筛选 / 排序管线 `useMemo` 缓存，纯实时帧不再整管线重算。
 
 ## 验证
 
-- `tsc --strict` 对纯逻辑层（class/*.ts）零错误；全量（含 .tsx）零错误。
-- 运行时单测覆盖：格式化、地理解析（旗帜 emoji/ISO/中英名）、`buildPins`（跳过无法解析地区、在线/离线着色、同地区散开）、实时帧解析。
+- `tsc --strict` 对纯逻辑层（class/*.ts）与全量（含 .tsx）零错误。
+- 运行时单测覆盖：格式化、地理解析、地图打点、实时帧解析、Ping 颜色稳定性 / 百分位、列表筛选、可用率、哪吒数据转换、管理功能请求体映射等。
 
-## 导入方式
+## 导入与开发
 
-本仓库根目录即 Scripting 脚本源码（`script.json` + `index.tsx` + 各子目录），可直接通过 GitHub 链接导入。
+本脚本作为 [Scripting-Scripts](https://github.com/SEMANTICx/Scripting-Scripts) 仓库的一员管理：源码在 `src/Pong/`，打包产物 `dist/Pong.scripting` 为导入源。导入链接、版本发布与回退流程见仓库根目录 README。
 
-在 iOS 上点击下面任一链接即可唤起 Scripting 并导入：
-
-- Deep link（直接唤起 App）：
-  `scripting://import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FSEMANTICx%2FScripting-Scripts%22%5D`
-- 跳板网页（分享给别人更稳，浏览器里点）：
-  https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FSEMANTICx%2FScripting-Scripts%22%5D
-
-导入后首次运行进入「设置」添加你的 Komari / 哪吒面板地址即可。
-
-## 开发与版本控制
-
-本仓库以**源码形式**管理（而非打包好的 `.scripting` zip），便于 `git diff` 追踪每次改动：
-
-```bash
-git clone https://github.com/SEMANTICx/Scripting-Scripts.git
-# 修改 page/ class/ context/ 下的源码
-git add -A && git commit -m "feat: xxx"
-git push
-```
-
-推送后，重新点上面的导入链接即可在 Scripting 中拉取最新版本（导入会覆盖同名脚本）。`.scripting` 打包文件已在 `.gitignore` 中忽略，不纳入版本控制。
-
-### 版本控制工作流（控制导入哪个版本 / 改坏可回退）
-
-> Scripting 从仓库导入时拉取的是 **`main` 分支的当前内容**。所以「线上版本」=「`main` 上是什么」。
-> 只有 `push main` 之后导入才会变；本地 `dev` 怎么改都不影响线上。
-
-- **`dev` 分支**：日常开发，随便改、随便 commit，改坏了也没关系（它不是导入源）。
-- **`main` 分支**：只放确认可用的版本，是 GitHub 导入源。每次发布打一个版本 tag。
-
-**日常开发（在 dev）**
-```bash
-git checkout dev
-# 改 page/ class/ context/ 源码
-git add -A && git commit -m "改动说明"
-```
-
-**发布一个新版本**（把 dev 当前状态推成线上版本，并打 tag）
-```bash
-sh release.sh v1.0.1 "本次更新说明"
-# 脚本只在本地合并到 main + 打 tag，不会自动 push
-# 确认无误后，手动 push 才真正上线：
-git push origin main --follow-tags
-```
-
-**改坏了，回退到旧版本**
-```bash
-sh rollback.sh v1.0.0          # 把 main 内容退回 v1.0.0（前进式，不改写历史）
-git push origin main           # 确认后手动 push，导入即回到旧版
-```
-
-回退采用「用旧版本内容生成一个新提交」的方式，**不需要 force push**，远程历史永远完整、安全，随时可再前进或再回退。`release.sh` / `rollback.sh` 是本地辅助脚本，已在 `.gitignore` 中忽略。
+首次运行进入「设置」添加你的 Komari / 哪吒面板地址即可。访客模式只需地址；管理功能需要配置对应的 Token 或账号登录。
