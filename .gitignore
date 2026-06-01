@@ -1,9 +1,12 @@
 # macOS / iOS
 .DS_Store
 
-# 构建产物 / 打包文件（源码用 git 管，不提交打好的 .scripting zip）
+# 打包产物:默认忽略所有 .scripting / .zip……
 *.scripting
 *.zip
+# ……但 dist/ 下的 .scripting 是导入源,必须纳入 git
+!dist/
+!dist/*.scripting
 
 # 编辑器
 .vscode/
@@ -13,6 +16,8 @@
 *.log
 node_modules/
 
-# 版本管理辅助脚本(本地工具,不属于脚本源码)
+# 本地辅助脚本(不属于脚本源码,不纳入 git)
 release.sh
 rollback.sh
+build.sh
+make_links.sh
