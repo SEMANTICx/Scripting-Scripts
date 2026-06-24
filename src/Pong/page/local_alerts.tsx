@@ -12,7 +12,8 @@ import {
   Toggle,
   useState,
 } from "scripting";
-import { DEFAULT_ALERT_PREFS, type AlertPrefs } from "../class/alert_rules";
+import { DEFAULT_ALERT_PREFS } from "../class/alert_rules";
+import type { AlertPrefs } from "../class/alert_rules";
 import { loadAlertPrefs, normalizeAlertPrefs, saveAlertPrefs } from "../class/alert_prefs";
 
 function NumberField({

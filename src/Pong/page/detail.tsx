@@ -33,8 +33,6 @@ import { getActiveInstance } from "../class/config";
 import { notifyPingAnomalies } from "../class/local_alerts";
 import { nodeHealthReasons, nodeHealthScore } from "../class/health";
 import { chartHeight } from "../class/ui";
-type Obs<T> = { value: T; setValue: (v: T) => void };
-
 import type { Instance, ClientDetail } from "../class/types";
 import {
   buildPingMarks,
@@ -42,10 +40,8 @@ import {
   buildPingLossSegments,
   applyPingColorOverrides,
   areAllPingLinesHidden,
-  type PingLossSegment,
-  type PingMark,
-  type PingSummary,
 } from "../class/ping";
+import type { PingLossSegment, PingMark, PingSummary } from "../class/ping";
 import {
   loadPingColorOverrides,
   setPingColorOverride,
@@ -56,10 +52,8 @@ import {
   buildLoadSummaries,
   LOAD_CHARTS,
   chartsForNode,
-  type LoadMark,
-  type LoadChartSpec,
-  type LoadSummary,
 } from "../class/loadchart";
+import type { LoadMark, LoadChartSpec, LoadSummary } from "../class/loadchart";
 import {
   formatBytes,
   formatSpeed,
@@ -72,6 +66,8 @@ import {
   daysUntil,
   formatClock,
 } from "../class/format";
+
+type Obs<T> = { value: T; setValue: (v: T) => void };
 
 export function View({ uuid }: { uuid: string }) {
   const dismiss = Navigation.useDismiss();

@@ -2,7 +2,8 @@
 // Local alert preferences. Device-local Storage only; no backend writes.
 // ============================================================================
 import { Script } from "scripting";
-import { DEFAULT_ALERT_PREFS, type AlertPrefs } from "./alert_rules";
+import { DEFAULT_ALERT_PREFS } from "./alert_rules";
+import type { AlertPrefs } from "./alert_rules";
 
 const KEY = `${Script.name}.localAlerts.prefs`;
 

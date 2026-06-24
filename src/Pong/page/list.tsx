@@ -37,8 +37,8 @@ import {
   buildCategories,
   applyFilter,
   parseTags,
-  type Category,
 } from "../class/filter";
+import type { Category } from "../class/filter";
 import { loadGroups, toggleMember } from "../class/groups";
 
 export function View({
@@ -341,7 +341,8 @@ function NodeRow({ uuid }: { uuid: string }) {
         spacing={10}
         padding={14}
         frame={{ maxWidth: "infinity", alignment: "leading" }}
-        glassEffect={{ glass: UIGlass.regular(), shape: { type: "rect", cornerRadius: 20 } }}
+        glassEffect={safeGlassEffect(20)}
+        background={"secondarySystemGroupedBackground"}
         clipShape={{ type: "rect", cornerRadius: 20 }}
         shadow={{ color: "rgba(0,0,0,0.12)", radius: 8, x: 0, y: 3 }}
       >
@@ -545,6 +546,15 @@ function Sparkline({
 
 function idleSparkValue(index: number): number {
   return 0.065 + ((index * 7) % 5) * 0.008;
+}
+
+function safeGlassEffect(cornerRadius: number): any {
+  try {
+    if (typeof UIGlass === "undefined") return undefined;
+    return { glass: UIGlass.regular(), shape: { type: "rect", cornerRadius } };
+  } catch {
+    return undefined;
+  }
 }
 
 function loadColor(r: number): string {
