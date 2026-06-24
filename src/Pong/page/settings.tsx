@@ -10,7 +10,6 @@ import {
   List,
   Navigation,
   NavigationStack,
-  Picker,
   Section,
   Spacer,
   Text,
@@ -26,7 +25,7 @@ import {
   setActiveInstance,
   normalizeBaseUrl,
 } from "../class/config";
-import { getBackend, ALL_BACKENDS } from "../class/server";
+import { getBackend } from "../class/server";
 import { useMonitor } from "../context/Monitor";
 import type { Instance, AuthMode, AuthConfig, BackendKind } from "../class/types";
 
@@ -108,47 +107,7 @@ export function View() {
             cfg.instances.map((inst) => (
               <HStack
                 key={inst.id}
-                trailingSwipeActions={{
-                  allowsFullSwipe: true,
-                  actions: [
-                    <Button
-                      title={"删除"}
-                      role={"destructive"}
-                      action={async () => {
-                        removeInstance(inst.id);
-                        await afterChange();
-                      }}
-                    />,
-                    <Button
-                      title={"编辑"}
-                      action={() => openEditor(inst)}
-                    />,
-                  ],
-                }}
-                leadingSwipeActions={{
-                  allowsFullSwipe: false,
-                  actions: [
-                    <Button
-                      title={"诊断"}
-                      systemImage={"stethoscope"}
-                      action={() => openDiagnostics(inst)}
-                    />,
-                    ...(inst.auth && inst.auth.mode !== "none"
-                      ? [
-                          <Button
-                            title={"管理面板"}
-                            systemImage={"gearshape.2"}
-                            action={() => openAdmin(inst)}
-                          />,
-                          <Button
-                            title={"管理节点"}
-                            systemImage={"server.rack"}
-                            action={() => openNodeManager(inst)}
-                          />,
-                        ]
-                      : []),
-                  ],
-                }}
+                spacing={8}
               >
                 <Button
                   action={async () => {
@@ -189,8 +148,32 @@ export function View() {
                       </Text>
                     </VStack>
                     <Spacer />
-                    <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
                   </HStack>
+                </Button>
+                <Button action={() => openEditor(inst)}>
+                  <Image systemName={"square.and.pencil"} foregroundStyle={"systemBlue"} />
+                </Button>
+                <Button action={() => openDiagnostics(inst)}>
+                  <Image systemName={"stethoscope"} foregroundStyle={"systemTeal"} />
+                </Button>
+                {inst.auth && inst.auth.mode !== "none" ? (
+                  <>
+                    <Button action={() => openAdmin(inst)}>
+                      <Image systemName={"gearshape.2"} foregroundStyle={"systemIndigo"} />
+                    </Button>
+                    <Button action={() => openNodeManager(inst)}>
+                      <Image systemName={"server.rack"} foregroundStyle={"systemPurple"} />
+                    </Button>
+                  </>
+                ) : null}
+                <Button
+                  role={"destructive"}
+                  action={async () => {
+                    removeInstance(inst.id);
+                    await afterChange();
+                  }}
+                >
+                  <Image systemName={"trash"} foregroundStyle={"systemRed"} />
                 </Button>
               </HStack>
             ))
@@ -347,20 +330,22 @@ function EditorView({
           header={<Text>探针类型</Text>}
           footer={<Text>选择面板对应的探针软件，连接方式与可用功能会随之调整。</Text>}
         >
-          <Picker
-            title={"类型"}
-            value={kind}
-            onChanged={(v: string) => {
-              setKind(v as BackendKind);
+          <ChoiceRow
+            title={"Komari"}
+            selected={kind === "komari"}
+            onSelect={() => {
+              setKind("komari");
               setTestResult("");
             }}
-          >
-            {ALL_BACKENDS.map((b) => (
-              <Text key={b.caps.kind} tag={b.caps.kind}>
-                {b.caps.label}
-              </Text>
-            ))}
-          </Picker>
+          />
+          <ChoiceRow
+            title={"哪吒 Nezha"}
+            selected={kind === "nezha"}
+            onSelect={() => {
+              setKind("nezha");
+              setTestResult("");
+            }}
+          />
         </Section>
 
         <Section
@@ -391,18 +376,30 @@ function EditorView({
             </Text>
           }
         >
-          <Picker
-            title={"认证方式"}
-            value={authMode}
-            onChanged={(v: string) => {
-              setAuthMode(v as AuthMode);
+          <ChoiceRow
+            title={kind === "nezha" ? "无（游客）" : "无（公开）"}
+            selected={authMode === "none"}
+            onSelect={() => {
+              setAuthMode("none");
               setTestResult("");
             }}
-          >
-            <Text tag={"none"}>{kind === "nezha" ? "无（游客）" : "无（公开）"}</Text>
-            <Text tag={"token"}>{getBackend(kind).caps.tokenLabel}</Text>
-            <Text tag={"password"}>用户名密码</Text>
-          </Picker>
+          />
+          <ChoiceRow
+            title={getBackend(kind).caps.tokenLabel}
+            selected={authMode === "token"}
+            onSelect={() => {
+              setAuthMode("token");
+              setTestResult("");
+            }}
+          />
+          <ChoiceRow
+            title={"用户名密码"}
+            selected={authMode === "password"}
+            onSelect={() => {
+              setAuthMode("password");
+              setTestResult("");
+            }}
+          />
 
           {authMode === "token" ? (
             <TextField
@@ -457,5 +454,28 @@ function CompatibilityNotice({ title }: { title: string }) {
         </Section>
       </List>
     </NavigationStack>
+  );
+}
+
+function ChoiceRow({
+  title,
+  selected,
+  onSelect,
+}: {
+  title: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <Button action={onSelect}>
+      <HStack>
+        <Image
+          systemName={selected ? "checkmark.circle.fill" : "circle"}
+          foregroundStyle={selected ? "systemGreen" : "systemGray"}
+        />
+        <Text>{title}</Text>
+        <Spacer />
+      </HStack>
+    </Button>
   );
 }
