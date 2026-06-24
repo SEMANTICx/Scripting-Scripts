@@ -1,0 +1,25 @@
+{
+  "online": ["node-a"],
+  "data": {
+    "node-a": {
+      "cpu": { "usage": 12 },
+      "ram": { "used": 1024, "total": 4096 },
+      "swap": { "used": 0, "total": 0 },
+      "load": { "load1": 0.1, "load5": 0.2, "load15": 0.3 },
+      "disk": { "used": 2048, "total": 8192 },
+      "network": { "up": 10, "down": 20, "totalUp": 100, "totalDown": 200 },
+      "connections": { "tcp": 3, "udp": 1 },
+      "uptime": 3600,
+      "process": 88,
+      "message": "",
+      "updated_at": "2026-06-25T12:00:00.000Z",
+      "gpu": {
+        "average_usage": 41,
+        "detailed_info": [
+          { "name": "RTX 4060", "utilization": 40, "temperature": 61 },
+          { "name": "RTX 4060 Ti", "utilization": 42, "temperature": 66 }
+        ]
+      }
+    }
+  }
+}

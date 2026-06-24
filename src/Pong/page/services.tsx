@@ -7,6 +7,7 @@
 // S: Single Purpose — read-only service views; data shaping in class/uptime.ts.
 // ============================================================================
 import {
+  Button,
   Chart,
   HeatMapChart,
   HStack,
@@ -23,10 +24,15 @@ import {
   useEffect,
   useMemo,
   useState,
+  useObservable,
 } from "scripting";
 import { getActiveInstance } from "../class/config";
 import { fetchServiceOverview } from "../class/server";
 import type { ServiceOverview } from "../class/types";
+import type { NodeBasicInfo } from "../class/types";
+import { useMonitor } from "../context/Monitor";
+import { View as DetailView } from "./detail";
+import { contentDetents } from "../class/ui";
 import {
   buildUptimeMatrix,
   serviceDomain,
@@ -48,36 +54,102 @@ function uptimeTint(p: number): string {
 // List view — one row per service with availability bar + current delay.
 // ----------------------------------------------------------------------------
 function ServiceRow({ s }: { s: ServiceOverview }) {
+  const presented = useObservable<boolean>(false);
   return (
-    <VStack alignment={"leading"} spacing={6} padding={{ vertical: 4 }}>
-      <HStack>
-        <Image
-          systemName={s.up ? "checkmark.circle.fill" : "xmark.circle.fill"}
-          foregroundStyle={s.up ? "systemGreen" : "systemRed"}
+    <Button
+      action={() => presented.setValue(true)}
+      sheet={{ isPresented: presented, content: <ServiceDetailView service={s} /> }}
+    >
+      <VStack alignment={"leading"} spacing={6} padding={{ vertical: 4 }}>
+        <HStack>
+          <Image
+            systemName={s.up ? "checkmark.circle.fill" : "xmark.circle.fill"}
+            foregroundStyle={s.up ? "systemGreen" : "systemRed"}
+          />
+          <Text font={"subheadline"} lineLimit={1}>
+            {s.name}
+          </Text>
+          <Spacer />
+          <Text font={"caption"} foregroundStyle={uptimeTint(s.uptime)}>
+            {s.uptime.toFixed(2)}%
+          </Text>
+        </HStack>
+        <ProgressView
+          value={Math.max(0, Math.min(1, s.uptime / 100))}
+          total={1}
+          progressViewStyle={"linear"}
         />
-        <Text font={"subheadline"} lineLimit={1}>
-          {s.name}
-        </Text>
-        <Spacer />
-        <Text font={"caption"} foregroundStyle={uptimeTint(s.uptime)}>
-          {s.uptime.toFixed(2)}%
-        </Text>
-      </HStack>
-      <ProgressView
-        value={Math.max(0, Math.min(1, s.uptime / 100))}
-        total={1}
-        progressViewStyle={"linear"}
-      />
+        <HStack>
+          <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
+            可用率
+          </Text>
+          <Spacer />
+          <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
+            {s.currentDelay > 0 ? `当前 ${s.currentDelay.toFixed(0)} ms` : "无延迟数据"}
+          </Text>
+        </HStack>
+      </VStack>
+    </Button>
+  );
+}
+
+function ServiceDetailView({ service }: { service: ServiceOverview }) {
+  const dismiss = Navigation.useDismiss();
+  const monitor = useMonitor();
+  const nodes = service.serverIds && service.serverIds.length > 0
+    ? monitor.nodes.value.filter((n) => service.serverIds!.includes(n.id))
+    : [];
+
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle={service.name}
+        navigationBarTitleDisplayMode={"inline"}
+        toolbar={{ cancellationAction: [<Button title={"关闭"} action={dismiss} />] }}
+      >
+        <Section>
+          <HStack>
+            <Image systemName={service.up ? "checkmark.circle.fill" : "xmark.circle.fill"} foregroundStyle={service.up ? "systemGreen" : "systemRed"} />
+            <Text>{service.up ? "正常" : "异常"}</Text>
+            <Spacer />
+            <Text foregroundStyle={uptimeTint(service.uptime)}>{service.uptime.toFixed(2)}%</Text>
+          </HStack>
+          <HStack>
+            <Text foregroundStyle={"secondaryLabel"}>当前延迟</Text>
+            <Spacer />
+            <Text>{service.currentDelay > 0 ? `${service.currentDelay.toFixed(0)} ms` : "—"}</Text>
+          </HStack>
+        </Section>
+        <Section
+          header={<Text>关联节点</Text>}
+          footer={nodes.length === 0 ? <Text>当前服务概览没有返回关联节点列表；可在节点详情的网络延迟中查看该节点关联的服务监控。</Text> : undefined}
+        >
+          {nodes.length === 0 ? (
+            <Text foregroundStyle={"secondaryLabel"}>暂无可跳转节点</Text>
+          ) : (
+            nodes.map((node) => (
+              <ServiceNodeRow key={node.uuid} node={node} />
+            ))
+          )}
+        </Section>
+      </List>
+    </NavigationStack>
+  );
+}
+
+function ServiceNodeRow({ node }: { node: NodeBasicInfo }) {
+  const presented = useObservable<boolean>(false);
+  return (
+    <Button
+      action={() => presented.setValue(true)}
+      sheet={{ isPresented: presented, content: <DetailView uuid={node.uuid} presentationDetents={contentDetents()} /> }}
+    >
       <HStack>
-        <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
-          可用率
-        </Text>
+        <Text>{node.name}</Text>
         <Spacer />
-        <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
-          {s.currentDelay > 0 ? `当前 ${s.currentDelay.toFixed(0)} ms` : "无延迟数据"}
-        </Text>
+        <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
       </HStack>
-    </VStack>
+    </Button>
   );
 }
 

@@ -19,6 +19,7 @@ import type {
   NezhaMetricsData,
   NezhaMetricPoint,
   NezhaServiceInfo,
+  NezhaServiceHistory,
   NezhaServerGroupItem,
   NezhaStreamData,
   LoadRecord,
@@ -59,6 +60,7 @@ import {
   metricsForLoadType,
   metricsToLoadRecords,
   serviceInfosToPingData,
+  serviceHistoriesToPingData,
   hoursToPeriod,
 } from "./nezha_transforms";
 export {
@@ -71,6 +73,7 @@ export {
   metricsForLoadType,
   metricsToLoadRecords,
   serviceInfosToPingData,
+  serviceHistoriesToPingData,
   hoursToPeriod,
 } from "./nezha_transforms";
 
@@ -295,12 +298,34 @@ async function fetchPingRecords(
   if (!baseUrl || !uuid) return empty;
   try {
     const period = hoursToPeriod(hours);
-    const infos = await getJson<NezhaServiceInfo[]>(
+    const services = await getJson<NezhaServiceInfo[]>(
       baseUrl,
-      `/server/${encodeURIComponent(uuid)}/service?period=${period}`,
+      `/server/${encodeURIComponent(uuid)}/service`,
       auth,
     );
-    return serviceInfosToPingData(infos || []);
+
+    const ids = (services || [])
+      .map((s) => Number(s.service_id ?? s.monitor_id ?? s.id))
+      .filter((id, index, all) => isFinite(id) && id > 0 && all.indexOf(id) === index);
+
+    const histories = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await getJson<NezhaServiceHistory>(
+            baseUrl,
+            `/service/${encodeURIComponent(String(id))}/history?period=${period}`,
+            auth,
+          );
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    return serviceHistoriesToPingData(
+      histories.filter((h): h is NezhaServiceHistory => !!h),
+      uuid,
+    );
   } catch {
     return empty;
   }
@@ -633,6 +658,13 @@ async function fetchServiceOverview(
       const dailyDown = Array.isArray(it.down)
         ? it.down.map((v: any) => Number(v) || 0)
         : [];
+      const serverIds = Array.isArray(it.servers)
+        ? it.servers
+            .map((s: any) => Number(typeof s === "object" ? s.server_id ?? s.id : s))
+            .filter((id: number) => isFinite(id) && id > 0)
+        : Array.isArray(it.server_ids)
+          ? it.server_ids.map((id: any) => Number(id)).filter((id: number) => isFinite(id) && id > 0)
+          : undefined;
       out.push({
         id: Number(it.service_id ?? it.monitor_id ?? key) || 0,
         name: it.service_name || it.monitor_name || `服务 ${key}`,
@@ -642,6 +674,7 @@ async function fetchServiceOverview(
         delays,
         dailyUp,
         dailyDown,
+        serverIds,
       });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));

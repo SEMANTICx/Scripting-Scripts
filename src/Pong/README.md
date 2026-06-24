@@ -12,11 +12,15 @@
 - **节点列表**：在线优先排序，行内显示 CPU / 内存仪表、上下行速率、以及一段开页即回填的 CPU 负载迷你曲线（sparkline）。
 - **搜索与分类**：列表支持搜索、按在线/离线/地区/标签筛选，以及本地自定义分组（创建/改名/删除/分配节点）。
 - **节点详情**：实时负载仪表（CPU/内存/磁盘/交换）、网络速率、连接数、进程数、运行时间；历史负载分指标卡片（多时间范围）；网络延迟（Ping）多线路折线图（可逐线显隐）；硬件信息、IP 地址卡片、计费信息。
+- **健康评分与解释**：按实时负载、磁盘、延迟、丢包、在线状态生成 0–100 健康分；列表可按健康分桶排序，详情页解释扣分原因。
+- **本地提醒**：设备本地通知，可配置离线、丢包、延迟、磁盘、流量阈值与冷却时间；不写入后端面板。
 - **服务可用率**（哪吒）：服务监控的 30 天可用率热力墙 + 当前延迟。
 
 ### 多探针管理
 - 在设置里添加 / 编辑 / 删除 / 切换多个探针实例，每个实例独立选择后端类型（Komari / 哪吒）。
 - 支持「测试连接」（读取版本接口）。
+- 支持「探针诊断」：只读检查连通性、认证、节点列表、历史数据与服务监控接口。
+- 支持「本地提醒」阈值配置（设备本地 Storage）。
 - 鉴权方式：无鉴权（访客）/ Token（Komari API Key、哪吒 Access Token）/ 账号密码登录（含两步验证，自动续期会话）。
 
 ### 节点 & 面板管理（按后端能力门控）
@@ -53,6 +57,9 @@
 | 用途 | 端点 |
 |---|---|
 | 实时数据 | WebSocket（实时帧同时携带完整节点列表，访客模式下据此构建列表） |
+| 静态节点列表 / 节点关联服务 | `GET {baseUrl}/api/v1/server` / `GET {baseUrl}/api/v1/server/{id}/service` |
+| 节点历史负载 | `GET {baseUrl}/api/v1/server/{id}/metrics?metric=...&period=...` |
+| 节点延迟历史 | `GET {baseUrl}/api/v1/service/{id}/history?period=...` |
 | 服务监控总览 | `GET {baseUrl}/api/v1/service`（含 30 天 up/down/delay） |
 | 告警 / 通知 / 计划任务 / 用户 / Token / 设置 | 对应 `/api/v1/...` 端点 |
 
@@ -70,6 +77,8 @@ page/
   detail.tsx               单节点详情（实时仪表 + 历史负载 + Ping 折线 + 硬件 / IP / 计费）
   services.tsx             服务可用率热力墙（哪吒）
   settings.tsx             探针实例 CRUD + 测试连接 + 进入管理面板
+  diagnostics.tsx          探针只读诊断：连通性 / 认证 / 节点 / 历史 / 服务监控
+  local_alerts.tsx         本地提醒阈值设置
   addnode.tsx              节点管理：列表 / 删除 / 新建（Komari）/ 装机引导
   groups.tsx               本地自定义分组管理
   admin.tsx                管理面板 HUB（按 caps 门控列出功能）
@@ -82,12 +91,18 @@ class/                     纯逻辑层（无 UI），通过 tsc 类型检查 + 
   types.ts                 所有数据契约 + 后端能力描述（Port）
   backend.ts               Backend 抽象接口 + 各后端 caps + 适配器注册工厂
   komari.ts / nezha.ts     两个后端适配器（实现 Backend 接口）
+  komari_transforms.ts     Komari 纯数据转换（无 I/O）
   nezha_transforms.ts      哪吒纯数据转换（无 I/O）
+  diagnostics.ts           只读诊断检查编排
   server.ts                后端门面：分派到适配器 + 后端中立的视图助手（地图打点 / 着色）
   config.ts                探针实例配置持久化（Storage）
   filter.ts / groups.ts    列表筛选 / 自定义分组逻辑
   geo.ts / coords_data.ts  地区码 → 经纬度 / 旗帜 / 中英名
   ping.ts / loadchart.ts / uptime.ts   Ping 折线 / 历史负载 / 可用率计算
+  health.ts                节点健康分与扣分解释（纯逻辑）
+  alert_rules.ts           本地提醒判定规则（纯逻辑）
+  alert_prefs.ts / local_alerts.ts     本地提醒偏好与通知调度
+  history_cache.ts         历史负载 / 延迟短期缓存
   format.ts / ui.ts        展示格式化 / UI 尺寸适配
 ```
 
@@ -103,8 +118,9 @@ class/                     纯逻辑层（无 UI），通过 tsc 类型检查 + 
 
 ## 验证
 
-- `tsc --strict` 对纯逻辑层（class/*.ts）与全量（含 .tsx）零错误。
-- 运行时单测覆盖：格式化、地理解析、地图打点、实时帧解析、Ping 颜色稳定性 / 百分位、列表筛选、可用率、哪吒数据转换、管理功能请求体映射等。
+- `npm run check`：使用 Node `--experimental-strip-types --check` 检查所有 `.ts` 文件，并运行 fixture / 转换 / Ping 单元测试。
+- 当前仓库没有 TypeScript / Scripting 类型检查依赖；Node 原生检查不支持 `.tsx`，因此 `.tsx` 需要后续接入 Scripting 类型包或编译器后再做完整静态检查。
+- 运行时单测覆盖：Komari fixture 归一化、哪吒 fixture 转换、Ping 颜色稳定性 / 隐藏逻辑 / 丢包统计、健康分 / 扣分解释、本地提醒规则、哪吒在线判断与服务历史转换。
 
 ## 导入与开发
 

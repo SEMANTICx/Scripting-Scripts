@@ -35,6 +35,7 @@ import type {
 } from "./types";
 import { regionToCoord, regionToName, regionToCode } from "./geo";
 import { loadTint } from "./format";
+import { healthTint, nodeLoadRatio } from "./health";
 import {
   Backend,
   LoginResult,
@@ -347,22 +348,5 @@ export function buildPins(
   return pins;
 }
 
-/** Heavier of CPU / memory usage as a 0..1 ratio; -1 when no record. */
-export function loadRatio(rec?: LiveRecord): number {
-  if (!rec) return -1;
-  const cpu = isFinite(rec.cpu?.usage) ? rec.cpu.usage / 100 : 0;
-  const memTotal = rec.ram?.total || 0;
-  const mem = memTotal > 0 ? rec.ram.used / memTotal : 0;
-  return Math.max(cpu, mem);
-}
-
-/**
- * Map a node's online state + live record to a marker colour.
- * Offline → grey. Online → tinted by the heavier of CPU / memory load.
- */
-export function healthTint(online: boolean, rec?: LiveRecord): string {
-  if (!online) return "systemGray";
-  const r = loadRatio(rec);
-  if (r < 0) return "systemGreen";
-  return loadTint(r);
-}
+export const loadRatio = nodeLoadRatio;
+export { healthTint };

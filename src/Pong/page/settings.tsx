@@ -31,6 +31,8 @@ import { getBackend, ALL_BACKENDS } from "../class/server";
 import { useMonitor } from "../context/Monitor";
 import { View as NodeManagerView } from "./addnode";
 import { View as AdminHubView } from "./admin";
+import { View as DiagnosticsView } from "./diagnostics";
+import { View as LocalAlertsView } from "./local_alerts";
 import type { Instance, AuthMode, AuthConfig, BackendKind } from "../class/types";
 
 export function View() {
@@ -65,6 +67,14 @@ export function View() {
 
   async function openAdmin(inst: Instance) {
     await Navigation.present({ element: <AdminHubView /> });
+  }
+
+  async function openDiagnostics(inst: Instance) {
+    await Navigation.present({ element: <DiagnosticsView instance={inst} /> });
+  }
+
+  async function openLocalAlerts() {
+    await Navigation.present({ element: <LocalAlertsView /> });
   }
 
   return (
@@ -117,11 +127,16 @@ export function View() {
                     />,
                   ],
                 }}
-                leadingSwipeActions={
-                  inst.auth && inst.auth.mode !== "none"
-                    ? {
-                        allowsFullSwipe: false,
-                        actions: [
+                leadingSwipeActions={{
+                  allowsFullSwipe: false,
+                  actions: [
+                    <Button
+                      title={"诊断"}
+                      systemImage={"stethoscope"}
+                      action={() => openDiagnostics(inst)}
+                    />,
+                    ...(inst.auth && inst.auth.mode !== "none"
+                      ? [
                           <Button
                             title={"管理面板"}
                             systemImage={"gearshape.2"}
@@ -132,10 +147,10 @@ export function View() {
                             systemImage={"server.rack"}
                             action={() => openNodeManager(inst)}
                           />,
-                        ],
-                      }
-                    : undefined
-                }
+                        ]
+                      : []),
+                  ],
+                }}
               >
                 <Button
                   action={async () => {
@@ -182,6 +197,20 @@ export function View() {
               </HStack>
             ))
           )}
+        </Section>
+
+        <Section
+          header={<Text>本机功能</Text>}
+          footer={<Text>本地提醒只在当前设备生效，不会修改后端面板的告警配置。</Text>}
+        >
+          <Button action={openLocalAlerts}>
+            <HStack>
+              <Image systemName={"bell.badge"} foregroundStyle={"systemOrange"} />
+              <Text>本地提醒</Text>
+              <Spacer />
+              <Image systemName={"chevron.right"} foregroundStyle={"tertiaryLabel"} />
+            </HStack>
+          </Button>
         </Section>
       </List>
     </NavigationStack>

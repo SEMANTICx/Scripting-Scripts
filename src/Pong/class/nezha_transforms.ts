@@ -13,6 +13,7 @@ import type {
   NezhaHost,
   NezhaMetricPoint,
   NezhaServiceInfo,
+  NezhaServiceHistory,
   LoadRecord,
   LoadType,
   PingData,
@@ -23,11 +24,10 @@ import type {
 
 /**
  * A node is considered ONLINE when its `last_active` is fresh relative to a
- * trusted "now" anchor. Nezha's own frontend treats a server as offline once
- * its agent stops reporting (~10s cadence); we use a slightly more generous
- * window so a node that reports a touch slower isn't flicker-marked offline.
+ * trusted "now" anchor. Use a conservative window so a node that reports a
+ * touch slower isn't flicker-marked offline between panel refreshes.
  */
-export const ONLINE_WINDOW_MS = 15 * 1000;
+export const ONLINE_WINDOW_MS = 30 * 1000;
 
 /** Canonical uuid for a Nezha server = its numeric id as a string. */
 export function nodeUuid(server: { id: number }): string {
@@ -49,7 +49,7 @@ function parseTime(iso?: string): number {
 export function isServerOnline(server: NezhaServer, nowMs: number): boolean {
   const t = parseTime(server.last_active);
   if (t === 0) return false;
-  return nowMs - t <= ONLINE_WINDOW_MS;
+  return t >= nowMs || nowMs - t <= ONLINE_WINDOW_MS;
 }
 
 /** Map a Nezha `host` into the canonical static fields. */
@@ -296,18 +296,18 @@ export function metricsToLoadRecords(
 }
 
 /**
- * Adapt Nezha's per-server service history (`GET /server/{id}/service`) into
- * the canonical PingData the chart consumes. Each service monitor becomes one
- * "task"; its parallel (created_at[], avg_delay[]) arrays become records.
- * avg_delay <= 0 is treated as a loss sample (value -1, kept for the loss %).
+ * Adapt legacy Nezha per-server service history into the canonical PingData.
+ * Kept for old panels that still return parallel created_at/avg_delay arrays.
  */
 export function serviceInfosToPingData(infos: NezhaServiceInfo[]): PingData {
   const records: PingRecord[] = [];
   const tasks: PingTask[] = [];
   for (const info of infos || []) {
+    const taskId = serviceIdOf(info);
+    if (taskId == null) continue;
     tasks.push({
-      id: info.monitor_id,
-      name: info.monitor_name || `监控 ${info.monitor_id}`,
+      id: taskId,
+      name: serviceNameOf(info, taskId),
       clients: [],
     });
     const times = info.created_at || [];
@@ -316,12 +316,67 @@ export function serviceInfosToPingData(infos: NezhaServiceInfo[]): PingData {
     for (let i = 0; i < n; i++) {
       const delay = delays[i];
       records.push({
-        task_id: info.monitor_id,
+        task_id: taskId,
         time: new Date(times[i]).toISOString(),
         value: delay > 0 ? delay : -1,
       });
     }
   }
+  return { count: records.length, records, tasks };
+}
+
+function serviceIdOf(info: NezhaServiceInfo): number | null {
+  const id = Number(info?.service_id ?? info?.monitor_id ?? info?.id);
+  return isFinite(id) && id > 0 ? id : null;
+}
+
+function serviceNameOf(info: NezhaServiceInfo, id: number): string {
+  return info?.service_name || info?.monitor_name || info?.name || `服务 ${id}`;
+}
+
+/**
+ * Adapt Nezha's current service history API:
+ *   GET /api/v1/service/{id}/history?period=1d
+ *
+ * The API returns one service with multiple server series. The node detail page
+ * has already selected one server, so only that server's data_points become
+ * chart records. status !== 1 or delay <= 0 is represented as loss (-1).
+ */
+export function serviceHistoriesToPingData(
+  histories: NezhaServiceHistory[],
+  serverId: string | number,
+): PingData {
+  const wanted = String(serverId);
+  const records: PingRecord[] = [];
+  const tasks: PingTask[] = [];
+
+  for (const history of histories || []) {
+    const taskId = Number(history?.service_id);
+    if (!isFinite(taskId) || taskId <= 0) continue;
+
+    const server = (history.servers || []).find((s) => String(s.server_id) === wanted);
+    if (!server) continue;
+
+    tasks.push({
+      id: taskId,
+      name: history.service_name || `服务 ${taskId}`,
+      clients: [],
+    });
+
+    for (const point of server.stats?.data_points || []) {
+      const ts = Number(point.ts);
+      const delay = Number(point.delay);
+      if (!isFinite(ts)) continue;
+      records.push({
+        task_id: taskId,
+        time: new Date(ts).toISOString(),
+        value: point.status === 1 && delay > 0 ? delay : -1,
+      });
+    }
+  }
+
+  records.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+  tasks.sort((a, b) => a.id - b.id);
   return { count: records.length, records, tasks };
 }
 

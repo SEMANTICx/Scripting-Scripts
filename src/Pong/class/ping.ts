@@ -26,37 +26,72 @@ export type PingSummary = {
   min: number;
   max: number;
   avg: number;
-  /** 50th / 99th percentile latency (ms). */
+  /** 50th / 95th / 99th percentile latency (ms). */
   p50: number;
+  p95: number;
   p99: number;
   /** Most recent latency sample (ms), or null if none. */
   last: number | null;
   color: string;
 };
 
-// A small, distinct palette reused for each task line / legend swatch.
-const PALETTE = [
-  "systemBlue",
-  "systemGreen",
-  "systemOrange",
-  "systemPurple",
-  "systemRed",
-  "systemTeal",
-  "systemPink",
-  "systemIndigo",
-];
+export type PingLossSegment = {
+  taskId: number;
+  taskName: string;
+  time: Date;
+  color: string;
+};
+
+/** Whether every CURRENT ping line is hidden. Ignores stale hidden ids from a previous data set. */
+export function areAllPingLinesHidden(
+  summaries: Pick<PingSummary, "taskId">[],
+  hiddenTaskIds: number[],
+): boolean {
+  if (summaries.length === 0) return false;
+  const hidden = new Set(hiddenTaskIds);
+  return summaries.every((summary) => hidden.has(summary.taskId));
+}
+
+// Chart-compatible HEX colours generated from the visible task order.
+// Scripting ShapeStyle supports #RRGGBB, so this is not limited to system color names.
+function colorForIndex(index: number): string {
+  const hue = ((Math.max(0, index) * 137.508 + 210) % 360) / 60;
+  const chroma = 0.56;
+  const x = chroma * (1 - Math.abs((hue % 2) - 1));
+  const m = 0.58 - chroma / 2;
+  const [r, g, b] =
+    hue < 1 ? [chroma, x, 0] :
+    hue < 2 ? [x, chroma, 0] :
+    hue < 3 ? [0, chroma, x] :
+    hue < 4 ? [0, x, chroma] :
+    hue < 5 ? [x, 0, chroma] :
+    [chroma, 0, x];
+  const hex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
 
 /**
- * Map a task id to a stable colour. The colour is anchored to the task id
- * ITSELF (taskId % palette length), NOT to a positional index into the set of
- * tasks that happen to have data. This guarantees a given line keeps the same
- * colour across refreshes and regardless of whether other lines have samples
- * in the selected time window. The `order` arg is accepted for backwards
- * compatibility but ignored.
+ * Map a task id to a unique colour within the CURRENT ordered task set.
+ * The ordered-task argument keeps all visible rows distinct, while the fallback
+ * remains deterministic for older call sites that only pass a task id.
  */
-export function taskColor(taskId: number, _order?: number[]): string {
-  const i = Math.trunc(taskId);
-  return PALETTE[((i % PALETTE.length) + PALETTE.length) % PALETTE.length];
+export function taskColor(taskId: number, orderedTaskIds?: number[]): string {
+  const order = orderedTaskIds || [];
+  const idx = order.indexOf(taskId);
+  if (idx >= 0) return colorForIndex(idx);
+  const i = Math.abs(Math.trunc(taskId));
+  return colorForIndex(i);
+}
+
+function orderedTaskIdsFromRecords(records: PingRecord[]): number[] {
+  return Object.keys(
+    records.reduce((acc: Record<number, true>, r) => {
+      acc[r.task_id] = true;
+      return acc;
+    }, {}),
+  )
+    .map((k) => Number(k))
+    .sort((a, b) => a - b);
 }
 
 function nameForTask(taskId: number, tasks: PingTask[]): string {
@@ -83,6 +118,7 @@ function percentile(sortedAsc: number[], p: number): number {
  */
 export function buildPingMarks(data: PingData): PingMark[] {
   const tasks = data.tasks || [];
+  const orderedTaskIds = orderedTaskIdsFromRecords(data.records || []);
   const marks: PingMark[] = [];
   for (const r of data.records || []) {
     if (!isFinite(r.value) || r.value < 0) continue;
@@ -93,7 +129,7 @@ export function buildPingMarks(data: PingData): PingMark[] {
       value: r.value,
       category: nameForTask(r.task_id, tasks),
       taskId: r.task_id,
-      foregroundStyle: taskColor(r.task_id),
+      foregroundStyle: taskColor(r.task_id, orderedTaskIds),
     });
   }
   // Chronological order keeps the line continuous.
@@ -128,6 +164,7 @@ export function buildPingSummaries(data: PingData): PingSummary[] {
       : 0;
     const sortedVals = values.slice().sort((a, b) => a - b);
     const p50 = percentile(sortedVals, 50);
+    const p95 = percentile(sortedVals, 95);
     const p99 = percentile(sortedVals, 99);
     const last = recs.length ? recs[recs.length - 1].value : null;
     return {
@@ -138,19 +175,55 @@ export function buildPingSummaries(data: PingData): PingSummary[] {
       max,
       avg,
       p50,
+      p95,
       p99,
       last: last != null && last >= 0 ? last : null,
-      color: taskColor(taskId),
+      color: taskColor(taskId, taskIds),
+    };
+  });
+}
+
+export function buildPingLossSegments(
+  data: PingData,
+  colors?: Record<number, string>,
+): PingLossSegment[] {
+  const tasks = data.tasks || [];
+  const taskIds = orderedTaskIdsFromRecords(data.records || []);
+  const out: PingLossSegment[] = [];
+  for (const r of data.records || []) {
+    if (!isFinite(r.value) || r.value >= 0) continue;
+    const d = new Date(r.time);
+    if (isNaN(d.getTime())) continue;
+    out.push({
+      taskId: r.task_id,
+      taskName: nameForTask(r.task_id, tasks),
+      time: d,
+      color: colors?.[r.task_id] || taskColor(r.task_id, taskIds),
+    });
+  }
+  return out.sort((a, b) => a.time.getTime() - b.time.getTime());
+}
+
+export function applyPingColorOverrides<T extends {
+  taskId: number;
+  color?: string;
+  foregroundStyle?: string;
+}>(items: T[], overrides: Record<number, string>): T[] {
+  return items.map((item) => {
+    const color = overrides[item.taskId];
+    if (!color) return item;
+    return {
+      ...item,
+      ...(item.color != null ? { color } : {}),
+      ...(item.foregroundStyle != null ? { foregroundStyle: color } : {}),
     };
   });
 }
 
 
 /**
- * Map each task NAME to its line colour, matching the summary-row swatch.
- * Feed this to <Chart chartForegroundStyleScale={...}> so the built-in
- * LineCategoryChart colours each line by OUR palette (it otherwise assigns
- * colours by its own category order, which won't match the list swatches).
+ * Legacy helper for callers that still use a category chart. Current ping
+ * rendering uses one LineChart per task and passes the same summary colour.
  */
 export function buildPingColorScale(
   summaries: PingSummary[],

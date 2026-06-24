@@ -1,0 +1,22 @@
+[
+  {
+    "service_id": 10,
+    "service_name": "江苏移动",
+    "servers": [
+      {
+        "server_id": 1,
+        "server_name": "Tokyo",
+        "stats": {
+          "avg_delay": 28,
+          "up_percent": 50,
+          "total_up": 1,
+          "total_down": 1,
+          "data_points": [
+            { "ts": 1760000000000, "delay": 27, "status": 1 },
+            { "ts": 1760000060000, "delay": 0, "status": 0 }
+          ]
+        }
+      }
+    ]
+  }
+]

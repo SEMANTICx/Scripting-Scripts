@@ -1,0 +1,14 @@
+{
+  "count": 3,
+  "tasks": [
+    { "id": 101, "name": "江苏移动", "clients": ["node-a"] }
+  ],
+  "basic_info": [
+    { "client": "node-a", "loss": 0.3333333333, "min": 24, "max": 31 }
+  ],
+  "records": [
+    { "task_id": 101, "time": "2026-06-25T12:00:00.000Z", "value": 24 },
+    { "task_id": 101, "time": "2026-06-25T12:01:00.000Z", "value": -1 },
+    { "task_id": 101, "time": "2026-06-25T12:02:00.000Z", "value": 31 }
+  ]
+}

@@ -14,6 +14,9 @@ import type { NodeBasicInfo, LiveData, LiveRecord, ConnStatus, Pin, Instance, Ne
 import { buildPins, LiveClient, getBackend } from "../class/server";
 import { buildLoadMarks } from "../class/loadchart";
 import { getActiveInstance, updateSessionToken } from "../class/config";
+import { notifyLiveAnomalies } from "../class/local_alerts";
+import { fetchLoadRecordsCached } from "../class/history_cache";
+import { liveInstanceKey } from "../class/monitor_keys";
 
 export type MonitorState = {
   instance: Observable<Instance | null>;
@@ -103,6 +106,7 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
    * filling from live WS samples). Best-effort and bounded in parallelism.
    */
   async function seedHistory(inst: Instance, list: NodeBasicInfo[]): Promise<void> {
+    const expectedKey = liveInstanceKey(inst);
     const seeded: { [uuid: string]: number[] } = {};
     const CONCURRENCY = 4;
     let i = 0;
@@ -110,7 +114,7 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
       while (i < list.length) {
         const n = list[i++];
         try {
-          const recs = await getBackend(inst.kind).fetchLoadRecords(inst.baseUrl, n.uuid, "cpu", SEED_HOURS, inst.auth);
+          const recs = await fetchLoadRecordsCached(inst, n.uuid, "cpu", SEED_HOURS);
           const marks = buildLoadMarks("cpu", recs);
           if (marks.length > 0) {
             const series = marks.map((m) => Math.max(0, Math.min(1, m.value / 100)));
@@ -123,6 +127,7 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
       }
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, list.length) }, worker));
+    if (liveInstanceKey(instance.value) !== expectedKey) return;
     // Merge: keep any live samples that arrived while seeding.
     const merged = { ...seeded, ...history.value };
     for (const uuid of Object.keys(seeded)) {
@@ -181,12 +186,15 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
     }
   }
 
+  const liveKey = liveInstanceKey(instance.value);
+
   // Manage the live WebSocket bound to the active instance.
   useEffect(() => {
     let client: LiveClient | null = null;
     const inst = instance.value;
 
     seededOnce.setValue(false); // re-seed history for the newly active instance
+    history.setValue({});
     reload();
 
     if (inst) {
@@ -244,6 +252,7 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
             }
             history.setValue(next);
             refreshPins(list, nextOnline, nextRecords);
+            notifyLiveAnomalies(inst, list, nextOnline, nextRecords).catch(() => {});
           },
           onStatus: (s) => {
             // Don't override a hard error from the initial fetch.
@@ -261,7 +270,7 @@ export function MonitorProvider({ children }: { children: JSX.Element }) {
     return () => {
       client?.stop();
     };
-  }, [instance.value?.id]);
+  }, [liveKey]);
 
   const state: MonitorState = {
     instance,

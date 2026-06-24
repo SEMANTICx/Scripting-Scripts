@@ -10,6 +10,7 @@ import {
   HStack,
   Image,
   LineCategoryChart,
+  LineChart,
   List,
   Navigation,
   NavigationStack,
@@ -26,8 +27,11 @@ import {
 } from "scripting";
 import { useMonitor } from "../context/Monitor";
 import { regionToName, regionToCode, codeToFlag } from "../class/geo";
-import { fetchPingRecords, fetchLoadRecords, fetchClientDetail, getBackend } from "../class/server";
+import { fetchClientDetail, getBackend } from "../class/server";
+import { fetchLoadRecordsCachedMeta, fetchPingRecordsCachedMeta } from "../class/history_cache";
 import { getActiveInstance } from "../class/config";
+import { notifyPingAnomalies } from "../class/local_alerts";
+import { nodeHealthReasons, nodeHealthScore } from "../class/health";
 import { chartHeight } from "../class/ui";
 type Obs<T> = { value: T; setValue: (v: T) => void };
 
@@ -35,10 +39,18 @@ import type { Instance, ClientDetail } from "../class/types";
 import {
   buildPingMarks,
   buildPingSummaries,
-  buildPingColorScale,
+  buildPingLossSegments,
+  applyPingColorOverrides,
+  areAllPingLinesHidden,
+  type PingLossSegment,
   type PingMark,
   type PingSummary,
 } from "../class/ping";
+import {
+  loadPingColorOverrides,
+  setPingColorOverride,
+  PING_COLOR_PRESETS,
+} from "../class/ping_prefs";
 import {
   buildLoadMarks,
   buildLoadSummaries,
@@ -96,6 +108,7 @@ function Body({ uuid }: { uuid: string }) {
           frames only re-render this subtree, keeping the List (and its scroll
           position / child range selectors) stable. */}
       <LiveOverview uuid={uuid} />
+      <HealthSection uuid={uuid} />
 
       {/* Network latency history (ping) */}
       <PingSection uuid={uuid} />
@@ -145,6 +158,36 @@ function Body({ uuid }: { uuid: string }) {
         </Section>
       ) : null}
     </>
+  );
+}
+
+function HealthSection({ uuid }: { uuid: string }) {
+  const monitor = useMonitor();
+  const isOnline = monitor.online.value.has(uuid);
+  const rec = monitor.records.value[uuid];
+  const score = nodeHealthScore({ online: isOnline, rec });
+  const reasons = nodeHealthReasons({ online: isOnline, rec });
+  const tint = score >= 85 ? "systemGreen" : score >= 65 ? "systemYellow" : score >= 40 ? "systemOrange" : "systemRed";
+
+  return (
+    <Section title={"健康"}>
+      <HStack>
+        <Image systemName={"heart.text.square"} foregroundStyle={tint} />
+        <Text font={"headline"}>{score}</Text>
+        <Spacer />
+        <Text font={"caption"} foregroundStyle={"secondaryLabel"}>
+          {reasons.length === 0 ? "状态正常" : `${reasons.length} 项扣分`}
+        </Text>
+      </HStack>
+      {reasons.slice(0, 4).map((r) => (
+        <HStack key={r.label}>
+          <Text font={"caption"}>{r.label}</Text>
+          <Spacer />
+          <Text font={"caption"} foregroundStyle={"secondaryLabel"}>{r.detail}</Text>
+          <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>{`-${r.penalty}`}</Text>
+        </HStack>
+      ))}
+    </Section>
   );
 }
 
@@ -334,6 +377,7 @@ function LoadChartSection({
   const [rangeIdx, setRangeIdx] = useState<number>(0); // default first range
   const [specIdx, setSpecIdx] = useState<number>(0); // default CPU
   const [loading, setLoading] = useState<boolean>(true);
+  const [cacheLabel, setCacheLabel] = useState<string>("");
   const [marks, setMarks] = useState<LoadMark[]>([]);
   const [summaries, setSummaries] = useState<LoadSummary[]>([]);
   // GPU/temp availability captured ONCE from a live-record snapshot on mount,
@@ -363,14 +407,16 @@ function LoadChartSection({
       return;
     }
     setLoading(true);
-    fetchLoadRecords(inst, uuid, spec.type, hours, {
+    fetchLoadRecordsCachedMeta(inst, uuid, spec.type, hours, {
       mem: memTotal,
       disk: diskTotal,
-    }).then((records) => {
+    }).then((result) => {
       if (cancelled) return;
+      const records = result.data;
       const m = buildLoadMarks(spec.type, records);
       setMarks(m);
       setSummaries(buildLoadSummaries(m));
+      setCacheLabel(result.cached ? `缓存 ${Math.round(result.ageMs / 1000)} 秒` : "刚更新");
       setLoading(false);
     });
     return () => {
@@ -384,6 +430,7 @@ function LoadChartSection({
       footer={
         <Text font={"caption2"} foregroundStyle={"secondaryLabel"}>
           来自探针历史记录（哪吒需启用 TSDB），按所选时间范围聚合。
+          {cacheLabel ? ` · ${cacheLabel}` : ""}
         </Text>
       }
     >
@@ -459,10 +506,16 @@ const DEFAULT_RANGES: { label: string; hours: number }[] = [
 ];
 
 function PingSection({ uuid }: { uuid: string }) {
+  const monitor = useMonitor();
   const [rangeIdx, setRangeIdx] = useState<number>(0); // default first range
+  const [statIdx, setStatIdx] = useState<number>(0); // 0=p50, 1=p95, 2=p99
   const [loading, setLoading] = useState<boolean>(true);
+  const [cacheLabel, setCacheLabel] = useState<string>("");
   const [marks, setMarks] = useState<PingMark[]>([]);
   const [summaries, setSummaries] = useState<PingSummary[]>([]);
+  const [losses, setLosses] = useState<PingLossSegment[]>([]);
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+  const [colorVersion, setColorVersion] = useState<number>(0);
   // Hidden task ids live in an Observable so that ONLY the views that read
   // `hiddenObs.value` (each row + the chart) re-render on toggle. The parent
   // PingSection deliberately never reads it, so toggling never rebuilds the
@@ -472,6 +525,7 @@ function PingSection({ uuid }: { uuid: string }) {
   const activeInst = getActiveInstance();
   const ranges = activeInst ? getBackend(activeInst.kind).caps.ranges : DEFAULT_RANGES;
   const hours = (ranges[rangeIdx] ?? ranges[0]).hours;
+  const statKey = statIdx === 0 ? "p50" : statIdx === 1 ? "p95" : "p99";
 
   useEffect(() => {
     let cancelled = false;
@@ -481,16 +535,26 @@ function PingSection({ uuid }: { uuid: string }) {
       return;
     }
     setLoading(true);
-    fetchPingRecords(inst, uuid, hours).then((data) => {
+    fetchPingRecordsCachedMeta(inst, uuid, hours).then((result) => {
       if (cancelled) return;
-      setMarks(buildPingMarks(data));
-      setSummaries(buildPingSummaries(data));
+      const data = result.data;
+      const overrides = loadPingColorOverrides(inst);
+      const m = applyPingColorOverrides(buildPingMarks(data), overrides);
+      const s = applyPingColorOverrides(buildPingSummaries(data), overrides);
+      const colors: Record<number, string> = {};
+      for (const row of s) colors[row.taskId] = row.color;
+      setMarks(m);
+      setSummaries(s);
+      setLosses(buildPingLossSegments(data, colors));
+      setCacheLabel(result.cached ? `缓存 ${Math.round(result.ageMs / 1000)} 秒` : "刚更新");
+      const node = monitor.nodeIndex.value[uuid];
+      if (node) notifyPingAnomalies(inst, node, s).catch(() => {});
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [uuid, hours]);
+  }, [uuid, hours, colorVersion]);
 
   function toggle(taskId: number) {
     const cur = hiddenObs.value;
@@ -499,8 +563,28 @@ function PingSection({ uuid }: { uuid: string }) {
     );
   }
 
+  function changeColor(taskId: number) {
+    const inst = getActiveInstance();
+    if (!inst) return;
+    const current = loadPingColorOverrides(inst)[taskId];
+    const idx = current ? PING_COLOR_PRESETS.indexOf(current) : -1;
+    const next = PING_COLOR_PRESETS[(idx + 1) % PING_COLOR_PRESETS.length];
+    setPingColorOverride(inst, taskId, next);
+    setColorVersion(colorVersion + 1);
+  }
+
   return (
-    <Section title={"网络延迟"}>
+    <Section
+      title={"网络延迟"}
+      footer={
+        activeInst?.kind === "nezha" ? (
+          <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
+            哪吒数据来自当前节点关联的服务监控；丢包点显示在图下方。
+            {cacheLabel ? ` · ${cacheLabel}` : ""}
+          </Text>
+        ) : cacheLabel ? <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>{cacheLabel}</Text> : undefined
+      }
+    >
       {/* Range selector */}
       <Picker
         title={"时间范围"}
@@ -514,6 +598,16 @@ function PingSection({ uuid }: { uuid: string }) {
           </Text>
         ))}
       </Picker>
+      <Picker
+        title={"分位"}
+        value={statIdx}
+        onChanged={setStatIdx}
+        pickerStyle={"segmented"}
+      >
+        <Text tag={0}>p50</Text>
+        <Text tag={1}>p95</Text>
+        <Text tag={2}>p99</Text>
+      </Picker>
 
       {loading ? (
         <HStack padding={{ vertical: 10 }}>
@@ -522,22 +616,40 @@ function PingSection({ uuid }: { uuid: string }) {
           <Spacer />
         </HStack>
       ) : summaries.length === 0 ? (
-        <HStack padding={{ vertical: 10 }}>
-          <Image systemName={"chart.xyaxis.line"} foregroundStyle={"tertiaryLabel"} />
-          <Text foregroundStyle={"secondaryLabel"}>暂无延迟数据</Text>
-          <Spacer />
-        </HStack>
+        <VStack alignment={"leading"} spacing={4} padding={{ vertical: 10 }}>
+          <HStack>
+            <Image systemName={"chart.xyaxis.line"} foregroundStyle={"tertiaryLabel"} />
+            <Text foregroundStyle={"secondaryLabel"}>暂无延迟数据</Text>
+            <Spacer />
+          </HStack>
+          <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
+            {activeInst?.kind === "nezha"
+              ? "请检查哪吒服务监控是否关联该节点。"
+              : "请检查 Komari Ping 任务是否启用并包含该节点。"}
+          </Text>
+        </VStack>
       ) : (
         <>
           {summaries.map((s) => (
             <PingSummaryRow
               key={`${s.taskId}`}
               s={s}
+              statKey={statKey}
+              highlighted={highlighted === s.taskId}
+              muted={highlighted != null && highlighted !== s.taskId}
               hiddenObs={hiddenObs}
               onToggle={() => toggle(s.taskId)}
+              onHighlight={() => setHighlighted(highlighted === s.taskId ? null : s.taskId)}
+              onColor={() => changeColor(s.taskId)}
             />
           ))}
-          <PingChart marks={marks} summaries={summaries} hiddenObs={hiddenObs} />
+          <PingChart
+            marks={marks}
+            summaries={summaries}
+            losses={losses}
+            highlightedTaskId={highlighted}
+            hiddenObs={hiddenObs}
+          />
         </>
       )}
     </Section>
@@ -552,14 +664,18 @@ function PingSection({ uuid }: { uuid: string }) {
 function PingChart({
   marks,
   summaries,
+  losses,
+  highlightedTaskId,
   hiddenObs,
 }: {
   marks: PingMark[];
   summaries: PingSummary[];
+  losses: PingLossSegment[];
+  highlightedTaskId: number | null;
   hiddenObs: Obs<number[]>;
 }) {
   const hidden = hiddenObs.value;
-  const allHidden = summaries.length > 0 && hidden.length >= summaries.length;
+  const allHidden = areAllPingLinesHidden(summaries, hidden);
   if (allHidden) {
     return (
       <HStack padding={{ vertical: 20 }}>
@@ -571,51 +687,104 @@ function PingChart({
       </HStack>
     );
   }
-  // Keep EVERY line's category present in the data at all times (we never drop
-  // marks), so the built-in LineCategoryChart never re-assigns colours by the
-  // shrinking visible-category set. Hidden lines are made invisible via
-  // opacity:0 while their per-mark baked `foregroundStyle` pins each visible
-  // line to its list swatch colour.
-  const renderMarks = marks.map((m) =>
-    hidden.includes(m.taskId) ? { ...m, opacity: 0 } : m,
-  );
-  // Pin each line to its list-swatch colour. Without this scale, the built-in
-  // LineCategoryChart colours lines by its own category order (first-seen in
-  // the data), which won't match the summary swatches and reshuffles on every
-  // refresh. The scale maps line NAME -> colour, derived from the same
-  // taskColor() the swatches use, so swatch == legend == line, stably.
-  const colorScale = buildPingColorScale(summaries);
+  // Render each latency line as its own LineChart with a fixed per-mark
+  // foregroundStyle. LineCategoryChart can reassign category colours when
+  // visible categories change, which makes lines drift after toggling.
+  const visibleSummaries = summaries.filter((s) => !hidden.includes(s.taskId));
   return (
-    <Chart frame={{ height: chartHeight() }} chartForegroundStyleScale={colorScale}>
-      <LineCategoryChart marks={renderMarks} />
-    </Chart>
+    <>
+      <Chart frame={{ height: chartHeight() }} chartLegend={"hidden"}>
+        {visibleSummaries.map((s) => {
+          const muted = highlightedTaskId != null && highlightedTaskId !== s.taskId;
+          return (
+            <LineChart
+              key={`${s.taskId}`}
+              marks={marks
+                .filter((m) => m.taskId === s.taskId)
+                .map((m) => ({
+                  label: m.label,
+                  value: m.value,
+                  foregroundStyle: s.color,
+                  opacity: muted ? 0.24 : 1,
+                }))}
+            />
+          );
+        })}
+      </Chart>
+      <PingLossStrip losses={losses.filter((l) => !hidden.includes(l.taskId))} highlightedTaskId={highlightedTaskId} />
+    </>
+  );
+}
+
+function PingLossStrip({
+  losses,
+  highlightedTaskId,
+}: {
+  losses: PingLossSegment[];
+  highlightedTaskId: number | null;
+}) {
+  const shown = losses.slice(-28);
+  if (shown.length === 0) return null;
+  return (
+    <HStack spacing={4} padding={{ top: 2, bottom: 6 }}>
+      <Image systemName={"bolt.slash"} font={"caption2"} foregroundStyle={"tertiaryLabel"} />
+      {shown.map((loss, i) => (
+        <VStack
+          key={`${loss.taskId}-${loss.time.getTime()}-${i}`}
+          frame={{ width: 7, height: 7 }}
+          background={loss.color}
+          opacity={highlightedTaskId != null && highlightedTaskId !== loss.taskId ? 0.25 : 0.9}
+          clipShape={{ type: "circle" }}
+        />
+      ))}
+      <Spacer />
+      <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
+        {`${losses.length} 个丢包点`}
+      </Text>
+    </HStack>
   );
 }
 
 function PingSummaryRow({
   s,
+  statKey,
+  highlighted,
+  muted,
   hiddenObs,
   onToggle,
+  onHighlight,
+  onColor,
 }: {
   s: PingSummary;
+  statKey: "p50" | "p95" | "p99";
+  highlighted: boolean;
+  muted: boolean;
   hiddenObs: Obs<number[]>;
   onToggle: () => void;
+  onHighlight: () => void;
+  onColor: () => void;
 }) {
   // Read the observable HERE so this row re-renders in place on toggle,
   // without the parent Section rebuilding every row.
   const hidden = hiddenObs.value.includes(s.taskId);
-  const dim = hidden ? 0.4 : 1;
+  const dim = hidden ? 0.35 : muted ? 0.45 : 1;
+  const statValue = statKey === "p50" ? s.p50 : statKey === "p95" ? s.p95 : s.p99;
   return (
     <HStack
       spacing={10}
       listRowInsets={{ top: 5, bottom: 5, leading: 16, trailing: 16 }}
+      background={highlighted ? "tertiarySystemFill" : undefined}
+      clipShape={{ type: "rect", cornerRadius: 10 }}
+      onTapGesture={onHighlight}
     >
-      <VStack
-        frame={{ width: 3, height: 30 }}
-        background={s.color}
-        clipShape={{ type: "capsule" }}
-        opacity={dim}
-      />
+      <Button action={onColor}>
+        <VStack
+          frame={{ width: 8, height: 30 }}
+          background={s.color}
+          clipShape={{ type: "capsule" }}
+          opacity={dim}
+        />
+      </Button>
       <VStack alignment={"leading"} spacing={1} opacity={dim}>
         <Text font={"subheadline"} fontWeight={"semibold"} lineLimit={1}>
           {s.name}
@@ -635,7 +804,7 @@ function PingSummaryRow({
       <Spacer />
       <VStack alignment={"trailing"} spacing={1} opacity={dim}>
         <Text font={"caption"} foregroundStyle={"secondaryLabel"}>
-          {`avg ${s.avg.toFixed(0)} ms`}
+          {`${statKey} ${statValue.toFixed(0)} ms`}
         </Text>
         <Text font={"caption2"} foregroundStyle={"tertiaryLabel"}>
           {`p50 ${s.p50.toFixed(0)} / p99 ${s.p99.toFixed(0)}`}

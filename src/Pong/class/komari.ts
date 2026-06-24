@@ -31,6 +31,13 @@ import {
   LiveSession,
   KOMARI_CAPS,
 } from "./backend";
+import {
+  enrichLiveData,
+  enrichRecord,
+  normalizeKomariLoadRecords,
+  normalizeKomariNodes,
+  normalizeKomariPingData,
+} from "./komari_transforms";
 
 // ----------------------------------------------------------------------------
 // Auth helpers. "token" mode → Komari API Key (Bearer); "password" → the
@@ -141,13 +148,7 @@ async function fetchNodes(baseUrl: string, auth?: AuthConfig): Promise<NodeBasic
   if (!body || body.status !== "success" || !Array.isArray(body.data)) {
     throw new Error(body?.message || "返回数据格式不正确");
   }
-  // Normalize: ensure numeric `id` exists (Komari keys by uuid) and sort.
-  return body.data
-    .map((n) => ({ ...n, id: n.id || 0 }))
-    .sort((a, b) => {
-      if (b.weight !== a.weight) return b.weight - a.weight;
-      return (a.name || "").localeCompare(b.name || "");
-    });
+  return normalizeKomariNodes(body.data);
 }
 
 async function fetchVersion(baseUrl: string, auth?: AuthConfig): Promise<string | null> {
@@ -184,52 +185,6 @@ async function verifyAuth(
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }
-}
-
-/**
- * Komari's WebSocket / recent records map almost 1:1 onto the canonical
- * LiveRecord, EXCEPT GPU and temperature, which Komari nests under a `gpu`
- * object (`{ average_usage, detailed_info: [{ name, utilization, temperature }] }`).
- * This normalises those into the canonical flat `gpu` / `temp` / `gpus` fields
- * so the detail UI renders them the same way for both backends.
- */
-function enrichRecord(rec: any): LiveRecord {
-  if (!rec || typeof rec !== "object") return rec as LiveRecord;
-  const g = rec.gpu;
-  if (g && typeof g === "object" && !Array.isArray(g)) {
-    const detail = Array.isArray(g.detailed_info) ? g.detailed_info : [];
-    const avg =
-      typeof g.average_usage === "number"
-        ? g.average_usage
-        : detail.length > 0
-          ? detail.reduce((a: number, d: any) => a + (Number(d?.utilization) || 0), 0) / detail.length
-          : undefined;
-    if (avg != null) rec.gpu = avg;
-    if (detail.length > 0) {
-      rec.gpus = detail.map((d: any, i: number) => ({
-        name: d?.name || `GPU ${i}`,
-        usage: typeof d?.utilization === "number" ? d.utilization : undefined,
-        temp: typeof d?.temperature === "number" ? d.temperature : undefined,
-      }));
-      // Live temperature: hottest GPU sensor (Komari has no CPU temp in Report).
-      let hi = 0;
-      for (const d of detail) {
-        const v = Number(d?.temperature) || 0;
-        if (v > hi) hi = v;
-      }
-      if (hi > 0) rec.temp = hi;
-    }
-  }
-  return rec as LiveRecord;
-}
-
-/** Normalise a whole LiveData payload's records (GPU/temperature). */
-function enrichLiveData(data: LiveData): LiveData {
-  if (!data?.data) return data;
-  for (const uuid of Object.keys(data.data)) {
-    data.data[uuid] = enrichRecord(data.data[uuid]);
-  }
-  return data;
 }
 
 async function fetchRecentRecord(
@@ -272,13 +227,7 @@ async function fetchPingRecords(
     if (!res.ok) return empty;
     const body = (await res.json()) as { status?: string; data?: PingData } | any;
     if (body?.status !== "success" || !body?.data) return empty;
-    const data = body.data as PingData;
-    return {
-      count: data.count ?? (data.records?.length || 0),
-      records: Array.isArray(data.records) ? data.records : [],
-      basic_info: Array.isArray(data.basic_info) ? data.basic_info : [],
-      tasks: Array.isArray(data.tasks) ? data.tasks : [],
-    };
+    return normalizeKomariPingData(body.data as PingData);
   } catch {
     return empty;
   }
@@ -318,8 +267,7 @@ async function fetchLoadRecords(
     if (!res.ok) return [];
     const body = (await res.json()) as { status?: string; data?: LoadData } | any;
     if (body?.status !== "success" || !body?.data) return [];
-    const recs = body.data.records;
-    return Array.isArray(recs) ? (recs as LoadRecord[]) : [];
+    return normalizeKomariLoadRecords(body.data);
   } catch {
     return [];
   }
@@ -493,16 +441,20 @@ function buildInstallCommands(
 }
 
 // ----------------------------------------------------------------------------
-// Live transport: anonymous → /api/clients WebSocket (send "get" on a timer);
-// authenticated → HTTP-poll /api/recent/:uuid per node (WS can't carry auth).
+// Live transport: prefer /api/clients WebSocket (send "get" on a timer) because it is
+// Komari's authoritative live online list. Authenticated instances fall back to
+// HTTP-poll /api/recent/:uuid only when the public live socket is unavailable.
 // ----------------------------------------------------------------------------
 
 class KomariLiveClient implements LiveSession {
   private ws: WebSocket | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsDataTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private polling = false;
+  private gotWsData = false;
+  private httpMode = false;
 
   constructor(
     private baseUrl: string,
@@ -516,7 +468,7 @@ class KomariLiveClient implements LiveSession {
     return this.getAuth ? this.getAuth() : undefined;
   }
 
-  private useHttp(): boolean {
+  private hasAuth(): boolean {
     const a = this.currentAuth();
     return !!a && a.mode !== "none";
   }
@@ -528,11 +480,19 @@ class KomariLiveClient implements LiveSession {
 
   start(): void {
     this.closed = false;
-    if (this.useHttp()) this.startHttpPolling();
-    else this.connect();
+    this.httpMode = false;
+    this.connect();
   }
 
   private startHttpPolling(): void {
+    if (this.closed || this.httpMode) return;
+    this.httpMode = true;
+    try {
+      this.ws?.close(1000, "fallback to http polling");
+    } catch {
+      /* noop */
+    }
+    this.cleanupSocket();
     this.handlers.onStatus("connected");
     this.pollHttp();
     this.timer = setInterval(() => this.pollHttp(), this.intervalMs);
@@ -583,8 +543,14 @@ class KomariLiveClient implements LiveSession {
 
       ws.onopen = () => {
         this.handlers.onStatus("connected");
+        this.gotWsData = false;
         this.poll();
         this.timer = setInterval(() => this.poll(), this.intervalMs);
+        if (this.hasAuth()) {
+          this.wsDataTimer = setTimeout(() => {
+            if (!this.closed && !this.gotWsData) this.startHttpPolling();
+          }, 6000);
+        }
       };
 
       ws.onmessage = (message: string | Data) => {
@@ -593,6 +559,11 @@ class KomariLiveClient implements LiveSession {
         try {
           const parsed = JSON.parse(text) as { status: string; data: LiveData };
           if (parsed?.status === "success" && parsed.data) {
+            this.gotWsData = true;
+            if (this.wsDataTimer) {
+              clearTimeout(this.wsDataTimer);
+              this.wsDataTimer = null;
+            }
             this.handlers.onData([], enrichLiveData(parsed.data));
           }
         } catch {
@@ -603,17 +574,20 @@ class KomariLiveClient implements LiveSession {
       ws.onerror = () => {
         this.handlers.onStatus("error");
         this.cleanupSocket();
-        this.scheduleReconnect();
+        if (this.hasAuth()) this.startHttpPolling();
+        else this.scheduleReconnect();
       };
 
       ws.onclose = () => {
         this.handlers.onStatus("disconnected");
         this.cleanupSocket();
-        this.scheduleReconnect();
+        if (!this.closed && this.hasAuth()) this.startHttpPolling();
+        else this.scheduleReconnect();
       };
     } catch {
       this.handlers.onStatus("error");
-      this.scheduleReconnect();
+      if (this.hasAuth()) this.startHttpPolling();
+      else this.scheduleReconnect();
     }
   }
 
@@ -630,6 +604,10 @@ class KomariLiveClient implements LiveSession {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.wsDataTimer) {
+      clearTimeout(this.wsDataTimer);
+      this.wsDataTimer = null;
+    }
     this.ws = null;
   }
 
@@ -645,8 +623,10 @@ class KomariLiveClient implements LiveSession {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.wsDataTimer) clearTimeout(this.wsDataTimer);
     this.timer = null;
     this.reconnectTimer = null;
+    this.wsDataTimer = null;
     try {
       this.ws?.close(1000, "client stop");
     } catch {

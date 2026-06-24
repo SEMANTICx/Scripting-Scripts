@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npm run check:syntax && npm test",
+    "check:syntax": "node scripts/check-syntax.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "check:ping": "node --experimental-strip-types --check src/Pong/class/ping.ts",
+    "check:komari-transforms": "node --experimental-strip-types --check src/Pong/class/komari_transforms.ts",
+    "check:nezha": "node --experimental-strip-types --check src/Pong/class/nezha.ts",
+    "check:komari": "node --experimental-strip-types --check src/Pong/class/komari.ts"
+  }
+}

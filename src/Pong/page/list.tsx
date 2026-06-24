@@ -30,7 +30,8 @@ import {
   formatBytes,
 } from "../class/format";
 import { regionToName } from "../class/geo";
-import { healthTint, getBackend } from "../class/server";
+import { getBackend } from "../class/server";
+import { nodeHealthScore, nodeHealthSummary } from "../class/health";
 import { contentDetents } from "../class/ui";
 import {
   buildCategories,
@@ -56,10 +57,12 @@ export function View({
   const showServices = inst ? getBackend(inst.kind).caps.hasServiceOverview : false;
   const [query, setQuery] = useState<string>("");
   const [catId, setCatId] = useState<string>("all");
+  const [sortMode, setSortMode] = useState<number>(0);
 
   const all = monitor.nodes.value;
   const scoped = uuids != null;
   const online = monitor.online.value;
+  const records = monitor.records.value;
   const customGroups = loadGroups();
 
   // The category/filter/sort pipeline is pure over (nodes, online, query,
@@ -81,8 +84,15 @@ export function View({
     const filtered = applyFilter(nodes, query, activeCat, online, customGroups);
     return filtered
       .slice()
-      .sort((a, b) => Number(online.has(b.uuid)) - Number(online.has(a.uuid)));
-  }, [nodes, query, activeCat, online, customGroups]);
+      .sort((a, b) => {
+        if (sortMode === 1) {
+          const sb = Math.floor(nodeHealthScore({ online: online.has(b.uuid), rec: records[b.uuid] }) / 10);
+          const sa = Math.floor(nodeHealthScore({ online: online.has(a.uuid), rec: records[a.uuid] }) / 10);
+          if (sb !== sa) return sb - sa;
+        }
+        return Number(online.has(b.uuid)) - Number(online.has(a.uuid));
+      });
+  }, [nodes, query, activeCat, online, customGroups, sortMode, records]);
 
   return (
     <NavigationStack>
@@ -151,6 +161,18 @@ export function View({
               activeId={activeCat.id}
               onSelect={setCatId}
             />
+
+            <Picker
+              title={"排序"}
+              value={sortMode}
+              onChanged={setSortMode}
+              pickerStyle={"segmented"}
+              listRowSeparator={"hidden"}
+              listRowInsets={{ top: 2, bottom: 2, leading: 16, trailing: 16 }}
+            >
+              <Text tag={0}>在线</Text>
+              <Text tag={1}>健康</Text>
+            </Picker>
 
             <Text
               font={"caption"}
@@ -278,7 +300,8 @@ function NodeRow({ uuid }: { uuid: string }) {
 
   const isOnline = monitor.online.value.has(uuid);
   const rec = monitor.records.value[uuid];
-  const dotColor = healthTint(isOnline, rec);
+  const health = nodeHealthSummary(isOnline, rec);
+  const dotColor = health.tint;
   const series = monitor.history.value[uuid] || [];
   const groups = loadGroups();
   const tags = parseTags(node.tags);
@@ -332,9 +355,7 @@ function NodeRow({ uuid }: { uuid: string }) {
             {node.name}
           </Text>
           <Spacer />
-          <Text font={"caption2"} foregroundStyle={dotColor} fontWeight={"medium"} lineLimit={1}>
-            {isOnline && rec && rec.uptime > 0 ? formatUptime(rec.uptime) : "离线"}
-          </Text>
+          <HealthCaption health={health} uptime={rec?.uptime || 0} />
         </HStack>
 
         {node.group || tags.length > 0 ? (
@@ -394,6 +415,36 @@ function NodeRow({ uuid }: { uuid: string }) {
         </HStack>
       </VStack>
     </Button>
+  );
+}
+
+function HealthCaption({
+  health,
+  uptime,
+}: {
+  health: ReturnType<typeof nodeHealthSummary>;
+  uptime: number;
+}) {
+  const showUptime = health.level === "normal" && uptime > 0;
+  const text = showUptime
+    ? formatUptime(uptime)
+    : uptime > 0 && (health.level === "elevated" || health.level === "busy")
+      ? `${health.label} · ${formatUptime(uptime)}`
+      : health.label;
+  return (
+    <HStack spacing={4}>
+      {health.icon && health.level !== "normal" ? (
+        <Image systemName={health.icon} font={"caption2"} foregroundStyle={health.tint} />
+      ) : null}
+      <Text font={"caption2"} foregroundStyle={health.tint} fontWeight={"medium"} lineLimit={1}>
+        {text}
+      </Text>
+      {health.level === "normal" ? (
+        <Text font={"caption2"} foregroundStyle={"tertiaryLabel"} lineLimit={1}>
+          {health.score}
+        </Text>
+      ) : null}
+    </HStack>
   );
 }
 
@@ -471,7 +522,7 @@ function Sparkline({
   const seeded = data.length >= 6;
   const pts = seeded
     ? data.slice(-MAXBARS)
-    : new Array(MAXBARS).fill(0).map(() => 0.06 + Math.random() * 0.05);
+    : new Array(MAXBARS).fill(0).map((_, i) => idleSparkValue(i));
 
   return (
     <HStack spacing={3} alignment={"bottom"} frame={{ height: MAXH, maxWidth: "infinity", alignment: "leading" }}>
@@ -490,6 +541,10 @@ function Sparkline({
       })}
     </HStack>
   );
+}
+
+function idleSparkValue(index: number): number {
+  return 0.065 + ((index * 7) % 5) * 0.008;
 }
 
 function loadColor(r: number): string {

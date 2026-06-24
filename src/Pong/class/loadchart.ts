@@ -76,12 +76,12 @@ export function buildLoadMarks(type: LoadType, records: LoadRecord[]): LoadMark[
         if (r.cpu != null) marks.push({ label: d, value: clampPct(r.cpu), category: "CPU" });
         break;
       case "ram": {
-        const v = r.ram_percent;
+        const v = r.ram_percent ?? percentOf(r.ram, r.ram_total);
         if (v != null) marks.push({ label: d, value: clampPct(v), category: "内存" });
         break;
       }
       case "disk": {
-        const v = r.disk_percent;
+        const v = r.disk_percent ?? percentOf(r.disk, r.disk_total);
         if (v != null) marks.push({ label: d, value: clampPct(v), category: "磁盘" });
         break;
       }
@@ -90,8 +90,12 @@ export function buildLoadMarks(type: LoadType, records: LoadRecord[]): LoadMark[
         if (r.net_in != null) marks.push({ label: d, value: r.net_in, category: "下行" });
         break;
       case "connections": {
-        if (r.connections_tcp != null) marks.push({ label: d, value: r.connections_tcp, category: "TCP" });
-        if (r.connections_udp != null) marks.push({ label: d, value: r.connections_udp, category: "UDP" });
+        if (r.connections_tcp != null || r.connections_udp != null) {
+          if (r.connections_tcp != null) marks.push({ label: d, value: r.connections_tcp, category: "TCP" });
+          if (r.connections_udp != null) marks.push({ label: d, value: r.connections_udp, category: "UDP" });
+        } else if (r.connections != null) {
+          marks.push({ label: d, value: r.connections, category: "连接" });
+        }
         break;
       }
       case "process":
@@ -129,4 +133,9 @@ export function buildLoadSummaries(marks: LoadMark[]): LoadSummary[] {
 function clampPct(v: number): number {
   if (isNaN(v)) return 0;
   return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+
+function percentOf(used?: number, total?: number): number | undefined {
+  if (used == null || !total || total <= 0) return undefined;
+  return (used / total) * 100;
 }

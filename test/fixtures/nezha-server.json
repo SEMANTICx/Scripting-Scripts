@@ -1,0 +1,39 @@
+[
+  {
+    "id": 1,
+    "name": "Tokyo",
+    "display_index": 10,
+    "country_code": "JP",
+    "last_active": "2026-06-25T12:00:20.000Z",
+    "host": {
+      "platform": "debian",
+      "platform_version": "12",
+      "cpu": ["AMD EPYC 4 Logical"],
+      "mem_total": 8589934592,
+      "disk_total": 107374182400,
+      "swap_total": 0,
+      "arch": "x86_64",
+      "virtualization": "kvm",
+      "version": "v1.13.0",
+      "gpu": ["NVIDIA T4"]
+    },
+    "state": {
+      "cpu": 23,
+      "mem_used": 2147483648,
+      "disk_used": 32212254720,
+      "net_in_speed": 1234,
+      "net_out_speed": 5678,
+      "net_in_transfer": 1000000,
+      "net_out_transfer": 2000000,
+      "uptime": 999,
+      "load_1": 0.3,
+      "load_5": 0.2,
+      "load_15": 0.1,
+      "tcp_conn_count": 20,
+      "udp_conn_count": 3,
+      "process_count": 88,
+      "gpu": [17],
+      "temperatures": [{ "Name": "cpu", "Temperature": 52 }]
+    }
+  }
+]

@@ -525,15 +525,46 @@ export type NezhaMetricsData = {
   data_points: NezhaMetricPoint[];
 };
 
-/** `GET /api/v1/server/{id}/service` item (per-monitor latency history). */
+/** `GET /api/v1/server/{id}/service` item (service list for one server). */
 export type NezhaServiceInfo = {
-  monitor_id: number;
-  server_id: number;
-  monitor_name: string;
+  service_id?: number;
+  monitor_id?: number;
+  id?: number;
+  server_id?: number;
+  service_name?: string;
+  monitor_name?: string;
+  name?: string;
   server_name?: string;
   display_index?: number;
-  created_at: number[]; // parallel to avg_delay (ms timestamps)
-  avg_delay: number[]; // ms; <= 0 means down/loss
+  created_at?: number[]; // legacy: parallel to avg_delay
+  avg_delay?: number[]; // legacy: <= 0 means down/loss
+};
+
+/** One data point from `GET /api/v1/service/{id}/history`. */
+export type NezhaServiceHistoryPoint = {
+  ts: number;
+  delay: number;
+  status: number;
+};
+
+/** Per-server block inside `GET /api/v1/service/{id}/history`. */
+export type NezhaServiceHistoryServer = {
+  server_id: number;
+  server_name?: string;
+  stats?: {
+    avg_delay?: number;
+    up_percent?: number;
+    total_up?: number;
+    total_down?: number;
+    data_points?: NezhaServiceHistoryPoint[];
+  };
+};
+
+/** `GET /api/v1/service/{id}/history` data. */
+export type NezhaServiceHistory = {
+  service_id: number;
+  service_name?: string;
+  servers?: NezhaServiceHistoryServer[];
 };
 
 /** `GET /api/v1/server-group` item. */
@@ -565,4 +596,6 @@ export type ServiceOverview = {
   dailyUp: number[];
   /** Per-day "down" check counts (oldest→newest), parallel to dailyUp. */
   dailyDown: number[];
+  /** Server ids participating in this service monitor, when the backend exposes them. */
+  serverIds?: number[];
 };
