@@ -57,28 +57,19 @@ export function View() {
   async function openNodeManager(inst: Instance) {
     setActiveInstance(inst.id);
     await monitor.reload();
-    const mod = await import("./addnode");
-    const NodeManagerView = mod.View;
-    await Navigation.present({ element: <NodeManagerView /> });
-    await afterChange();
+    await Navigation.present({ element: <CompatibilityNotice title={"管理节点"} /> });
   }
 
   async function openAdmin(inst: Instance) {
-    const mod = await import("./admin");
-    const AdminHubView = mod.View;
-    await Navigation.present({ element: <AdminHubView /> });
+    await Navigation.present({ element: <CompatibilityNotice title={"管理面板"} /> });
   }
 
   async function openDiagnostics(inst: Instance) {
-    const mod = await import("./diagnostics");
-    const DiagnosticsView = mod.View;
-    await Navigation.present({ element: <DiagnosticsView instance={inst} /> });
+    await Navigation.present({ element: <CompatibilityNotice title={"诊断"} /> });
   }
 
   async function openLocalAlerts() {
-    const mod = await import("./local_alerts");
-    const LocalAlertsView = mod.View;
-    await Navigation.present({ element: <LocalAlertsView /> });
+    await Navigation.present({ element: <CompatibilityNotice title={"本地提醒"} /> });
   }
 
   return (
@@ -441,6 +432,25 @@ function EditorView({
               />
             </>
           ) : null}
+        </Section>
+      </List>
+    </NavigationStack>
+  );
+}
+
+function CompatibilityNotice({ title }: { title: string }) {
+  const dismiss = Navigation.useDismiss();
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle={title}
+        navigationBarTitleDisplayMode={"inline"}
+        toolbar={{ cancellationAction: [<Button title={"关闭"} action={dismiss} />] }}
+      >
+        <Section>
+          <Text foregroundStyle={"secondaryLabel"}>
+            此功能暂时隐藏以恢复设置与节点列表的兼容性。确认主列表恢复后再逐项启用。
+          </Text>
         </Section>
       </List>
     </NavigationStack>

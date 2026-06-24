@@ -11,20 +11,23 @@ import {
   List,
   Navigation,
   NavigationStack,
+  Picker,
   ScrollView,
+  Section,
   Spacer,
   Text,
   VStack,
   useState,
 } from "scripting";
 import { useMonitor } from "../context/Monitor";
+import { View as SettingsView } from "./settings";
+import { View as GroupsView } from "./groups";
 import {
   formatSpeed,
   formatUptime,
   formatBytes,
 } from "../class/format";
 import { regionToName } from "../class/geo";
-import { getBackend } from "../class/server";
 import { nodeHealthScore, nodeHealthSummary } from "../class/health";
 import {
   buildCategories,
@@ -43,8 +46,6 @@ export function View({
 } = {}) {
   const dismiss = Navigation.useDismiss();
   const monitor = useMonitor();
-  const inst = monitor.instance.value;
-  const showServices = inst ? getBackend(inst.kind).caps.hasServiceOverview : false;
   const [query, setQuery] = useState<string>("");
   const [catId, setCatId] = useState<string>("all");
   const [sortMode, setSortMode] = useState<number>(0);
@@ -75,25 +76,13 @@ export function View({
       return Number(online.has(b.uuid)) - Number(online.has(a.uuid));
     });
 
-  async function openServices() {
-    const mod = await import("./services");
-    const ServicesView = mod.View;
-    await Navigation.present({
-      element: <ServicesView />,
-    });
-  }
-
   async function openGroups() {
-    const mod = await import("./groups");
-    const GroupsView = mod.View;
     await Navigation.present({
       element: <GroupsView />,
     });
   }
 
   async function openSettings() {
-    const mod = await import("./settings");
-    const SettingsView = mod.View;
     await Navigation.present({
       element: <SettingsView />,
     });
@@ -121,15 +110,6 @@ export function View({
           topBarTrailing: scoped
             ? []
             : [
-                ...(showServices
-                  ? [
-                      <Button
-                        action={openServices}
-                      >
-                        <Image systemName={"checkmark.shield"} />
-                      </Button>,
-                    ]
-                  : []),
                 <Button
                   action={openGroups}
                 >
@@ -291,10 +271,8 @@ function NodeRow({ uuid }: { uuid: string }) {
   if (!node) return <></>;
 
   async function openDetail() {
-    const mod = await import("./detail");
-    const DetailView = mod.View;
     await Navigation.present({
-      element: <DetailView uuid={uuid} />,
+      element: <BasicDetailView uuid={uuid} />,
     });
   }
 
@@ -410,6 +388,75 @@ function NodeRow({ uuid }: { uuid: string }) {
         </HStack>
       </VStack>
     </Button>
+  );
+}
+
+function BasicDetailView({ uuid }: { uuid: string }) {
+  const dismiss = Navigation.useDismiss();
+  const monitor = useMonitor();
+  const node = monitor.nodeIndex.value[uuid];
+  const online = monitor.online.value.has(uuid);
+  const rec = monitor.records.value[uuid];
+
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle={node?.name ?? "节点详情"}
+        navigationBarTitleDisplayMode={"inline"}
+        toolbar={{ cancellationAction: [<Button title={"关闭"} action={dismiss} />] }}
+      >
+        {!node ? (
+          <Section>
+            <Text foregroundStyle={"secondaryLabel"}>节点不存在</Text>
+          </Section>
+        ) : (
+          <>
+            <Section>
+              <HStack>
+                <Image
+                  systemName={online ? "checkmark.circle.fill" : "wifi.slash"}
+                  foregroundStyle={online ? "systemGreen" : "systemGray"}
+                />
+                <Text>{online ? "在线" : "离线"}</Text>
+                <Spacer />
+                {rec ? (
+                  <Text foregroundStyle={"secondaryLabel"}>{formatUptime(rec.uptime)}</Text>
+                ) : null}
+              </HStack>
+            </Section>
+            <Section title={"实时负载"}>
+              <SimpleRow label={"CPU"} value={rec ? `${(rec.cpu?.usage ?? 0).toFixed(1)}%` : "—"} />
+              <SimpleRow
+                label={"内存"}
+                value={rec && rec.ram?.total ? `${(((rec.ram.used || 0) / rec.ram.total) * 100).toFixed(1)}%` : "—"}
+              />
+              <SimpleRow
+                label={"上行 / 下行"}
+                value={rec ? `↑ ${formatSpeed(rec.network.up)} · ↓ ${formatSpeed(rec.network.down)}` : "—"}
+              />
+            </Section>
+            <Section title={"基础信息"}>
+              <SimpleRow label={"地区"} value={regionToName(node.region)} />
+              <SimpleRow label={"系统"} value={node.os || "—"} />
+              <SimpleRow label={"架构"} value={node.arch || "—"} />
+              <SimpleRow label={"CPU"} value={node.cpu_name || "—"} />
+              <SimpleRow label={"内存"} value={node.mem_total ? formatBytes(node.mem_total) : "—"} />
+              <SimpleRow label={"磁盘"} value={node.disk_total ? formatBytes(node.disk_total) : "—"} />
+            </Section>
+          </>
+        )}
+      </List>
+    </NavigationStack>
+  );
+}
+
+function SimpleRow({ label, value }: { label: string; value: string }) {
+  return (
+    <HStack>
+      <Text foregroundStyle={"secondaryLabel"}>{label}</Text>
+      <Spacer />
+      <Text lineLimit={1}>{value}</Text>
+    </HStack>
   );
 }
 
