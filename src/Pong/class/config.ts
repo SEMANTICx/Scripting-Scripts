@@ -6,6 +6,7 @@
 // ============================================================================
 import { Script } from "scripting";
 import type { Instance, MonitorConfig, AuthConfig, BackendKind } from "./types";
+import { normalizeBackendKind, normalizeInstance } from "./config_normalize";
 
 const KEY = `${Script.name}.config`;
 
@@ -25,10 +26,11 @@ export function normalizeBaseUrl(raw: string): string {
 export function loadConfig(): MonitorConfig {
   const raw = Storage.get<MonitorConfig>(KEY);
   if (raw && Array.isArray(raw.instances)) {
+    const instances = raw.instances.map(normalizeInstance);
     return {
       // Legacy instances saved before multi-backend support default to Komari.
-      instances: raw.instances.map((i) => ({ ...i, kind: i.kind || "komari" })),
-      activeId: raw.activeId || (raw.instances[0]?.id ?? ""),
+      instances,
+      activeId: raw.activeId || (instances[0]?.id ?? ""),
     };
   }
   return { instances: [], activeId: "" };
@@ -77,7 +79,7 @@ export function upsertInstance(input: {
   const baseUrl = normalizeBaseUrl(input.baseUrl);
   const name = input.name.trim() || baseUrl.replace(/^https?:\/\//, "");
   const auth = normalizeAuth(input.auth);
-  const kind: BackendKind = input.kind || "komari";
+  const kind: BackendKind = normalizeBackendKind(input.kind);
 
   if (input.id) {
     const idx = cfg.instances.findIndex((i) => i.id === input.id);

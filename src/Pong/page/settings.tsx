@@ -25,12 +25,14 @@ import {
   setActiveInstance,
   normalizeBaseUrl,
 } from "../class/config";
+import { capsFor } from "../class/backend";
+import { normalizeBackendKind } from "../class/config_normalize";
 import { getBackend } from "../class/server";
 import { useMonitor } from "../context/Monitor";
 import type { Instance, AuthMode, AuthConfig, BackendKind } from "../class/types";
 
-function backendLabel(kind?: BackendKind): string {
-  return kind === "nezha" ? "哪吒 Nezha" : "Komari";
+function backendLabel(kind?: BackendKind | string): string {
+  return capsFor(normalizeBackendKind(kind)).label;
 }
 
 export function View() {
@@ -207,7 +209,7 @@ function EditorView({
 }) {
   const dismiss = Navigation.useDismiss();
   const [name, setName] = useState<string>(instance?.name ?? "");
-  const [kind, setKind] = useState<BackendKind>(instance?.kind ?? "komari");
+  const [kind, setKind] = useState<BackendKind>(normalizeBackendKind(instance?.kind));
   const [url, setUrl] = useState<string>(instance?.baseUrl ?? "");
   const [authMode, setAuthMode] = useState<AuthMode>(instance?.auth?.mode ?? "none");
   const [apiKey, setApiKey] = useState<string>(instance?.auth?.apiKey ?? "");
@@ -216,6 +218,7 @@ function EditorView({
   const [twoFactor, setTwoFactor] = useState<string>(instance?.auth?.twoFactor ?? "");
   const [testing, setTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<string>("");
+  const caps = capsFor(kind);
 
   // Assemble an AuthConfig from the current form state (may be undefined).
   function currentAuth(sessionToken?: string): AuthConfig | undefined {
@@ -247,7 +250,8 @@ function EditorView({
       }
       setTesting(true);
       setTestResult("正在登录…");
-      const r = await getBackend(kind).login(baseUrl, username.trim(), password, twoFactor.trim() || undefined);
+      const backend = getBackend(kind);
+      const r = await backend.login(baseUrl, username.trim(), password, twoFactor.trim() || undefined);
       setTesting(false);
       if (!r.ok) {
         setTestResult(r.needs2FA ? "需要两步验证码（请填写 2FA）" : `登录失败：${r.error}`);
@@ -255,7 +259,7 @@ function EditorView({
       }
       sessionToken = r.sessionToken;
     } else if (authMode === "token" && !apiKey.trim()) {
-      setTestResult(`请填写 ${getBackend(kind).caps.tokenLabel}`);
+      setTestResult(`请填写 ${caps.tokenLabel}`);
       return;
     }
     upsertInstance({ id: instance?.id, name, kind, baseUrl, auth: currentAuth(sessionToken) });
@@ -269,9 +273,9 @@ function EditorView({
       setTestResult("请填写有效的地址");
       return;
     }
-    const backend = getBackend(kind);
     setTesting(true);
     setTestResult("测试中…");
+    const backend = getBackend(kind);
 
     if (authMode === "none") {
       const v = await backend.fetchVersion(baseUrl);
@@ -283,7 +287,7 @@ function EditorView({
     if (authMode === "token") {
       if (!apiKey.trim()) {
         setTesting(false);
-        setTestResult(`请填写 ${backend.caps.tokenLabel}`);
+        setTestResult(`请填写 ${caps.tokenLabel}`);
         return;
       }
       const r = await backend.verifyAuth(baseUrl, { mode: "token", apiKey: apiKey.trim() });
@@ -385,7 +389,7 @@ function EditorView({
             }}
           />
           <ChoiceRow
-            title={getBackend(kind).caps.tokenLabel}
+            title={caps.tokenLabel}
             selected={authMode === "token"}
             onSelect={() => {
               setAuthMode("token");
@@ -403,8 +407,8 @@ function EditorView({
 
           {authMode === "token" ? (
             <TextField
-              title={getBackend(kind).caps.tokenLabel}
-              prompt={`粘贴 ${getBackend(kind).caps.tokenLabel}`}
+              title={caps.tokenLabel}
+              prompt={`粘贴 ${caps.tokenLabel}`}
               value={apiKey}
               onChanged={setApiKey}
             />
