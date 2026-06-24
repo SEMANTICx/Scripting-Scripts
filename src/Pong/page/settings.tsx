@@ -11,7 +11,6 @@ import {
   Navigation,
   NavigationStack,
   Picker,
-  SecureField,
   Section,
   Spacer,
   Text,
@@ -30,6 +29,10 @@ import {
 import { getBackend, ALL_BACKENDS } from "../class/server";
 import { useMonitor } from "../context/Monitor";
 import type { Instance, AuthMode, AuthConfig, BackendKind } from "../class/types";
+
+function backendLabel(kind?: BackendKind): string {
+  return kind === "nezha" ? "哪吒 Nezha" : "Komari";
+}
 
 export function View() {
   const dismiss = Navigation.useDismiss();
@@ -182,7 +185,7 @@ export function View() {
                         foregroundStyle={"secondaryLabel"}
                         lineLimit={1}
                       >
-                        {getBackend(inst.kind).caps.label} · {inst.baseUrl}
+                        {backendLabel(inst.kind)} · {inst.baseUrl}
                       </Text>
                     </VStack>
                     <Spacer />
@@ -402,7 +405,7 @@ function EditorView({
           </Picker>
 
           {authMode === "token" ? (
-            <SecureField
+            <TextField
               title={getBackend(kind).caps.tokenLabel}
               prompt={`粘贴 ${getBackend(kind).caps.tokenLabel}`}
               value={apiKey}
@@ -418,7 +421,7 @@ function EditorView({
                 value={username}
                 onChanged={setUsername}
               />
-              <SecureField
+              <TextField
                 title={"密码"}
                 prompt={"密码"}
                 value={password}
