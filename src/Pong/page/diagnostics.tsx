@@ -67,7 +67,6 @@ function SummaryPanel({ items, running }: { items: DiagnosticItem[]; running: bo
       spacing={12}
       padding={{ vertical: 14, horizontal: 14 }}
       frame={{ maxWidth: "infinity", alignment: "leading" }}
-      glassEffect={safeGlassEffect(22)}
       background={"secondarySystemGroupedBackground"}
       clipShape={{ type: "rect", cornerRadius: 22 }}
       shadow={{ color: "rgba(0,0,0,0.10)", radius: 10, x: 0, y: 4 }}
@@ -101,7 +100,6 @@ function DiagnosticRow({ item }: { item: DiagnosticItem }) {
       spacing={10}
       padding={{ vertical: 12, horizontal: 12 }}
       frame={{ maxWidth: "infinity", alignment: "leading" }}
-      glassEffect={safeGlassEffect(18)}
       background={"secondarySystemGroupedBackground"}
       clipShape={{ type: "rect", cornerRadius: 18 }}
     >
@@ -135,15 +133,6 @@ function DiagnosticRow({ item }: { item: DiagnosticItem }) {
       ) : null}
     </HStack>
   );
-}
-
-function safeGlassEffect(cornerRadius: number): any {
-  try {
-    if (typeof UIGlass === "undefined") return undefined;
-    return { glass: UIGlass.regular(), shape: { type: "rect", cornerRadius } };
-  } catch {
-    return undefined;
-  }
 }
 
 function reportText(instance: Instance, items: DiagnosticItem[]): string {

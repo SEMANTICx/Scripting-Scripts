@@ -15,15 +15,9 @@ import {
   Spacer,
   Text,
   VStack,
-  useObservable,
   useState,
-  useMemo,
 } from "scripting";
 import { useMonitor } from "../context/Monitor";
-import { View as DetailView } from "./detail";
-import { View as SettingsView } from "./settings";
-import { View as GroupsView } from "./groups";
-import { View as ServicesView } from "./services";
 import {
   formatSpeed,
   formatUptime,
@@ -32,7 +26,6 @@ import {
 import { regionToName } from "../class/geo";
 import { getBackend } from "../class/server";
 import { nodeHealthScore, nodeHealthSummary } from "../class/health";
-import { contentDetents } from "../class/ui";
 import {
   buildCategories,
   applyFilter,
@@ -50,9 +43,6 @@ export function View({
 } = {}) {
   const dismiss = Navigation.useDismiss();
   const monitor = useMonitor();
-  const settingsPresented = useObservable<boolean>(false);
-  const groupsPresented = useObservable<boolean>(false);
-  const servicesPresented = useObservable<boolean>(false);
   const inst = monitor.instance.value;
   const showServices = inst ? getBackend(inst.kind).caps.hasServiceOverview : false;
   const [query, setQuery] = useState<string>("");
@@ -70,29 +60,44 @@ export function View({
   // `records` but not these inputs — don't rerun the whole pipeline. `online`
   // now has a stable reference across frames (gated in Monitor.onData), so this
   // recomputes only on real membership / query / category / group changes.
-  const nodes = useMemo(
-    () => (uuids ? all.filter((n) => uuids.includes(n.uuid)) : all),
-    [all, uuids],
-  );
-  const categories = useMemo(
-    () => buildCategories(nodes, online, customGroups),
-    [nodes, online, customGroups],
-  );
+  const nodes = uuids ? all.filter((n) => uuids.includes(n.uuid)) : all;
+  const categories = buildCategories(nodes, online, customGroups);
   const activeCat: Category =
     categories.find((c) => c.id === catId) ?? categories[0];
-  const ordered = useMemo(() => {
-    const filtered = applyFilter(nodes, query, activeCat, online, customGroups);
-    return filtered
-      .slice()
-      .sort((a, b) => {
-        if (sortMode === 1) {
-          const sb = Math.floor(nodeHealthScore({ online: online.has(b.uuid), rec: records[b.uuid] }) / 10);
-          const sa = Math.floor(nodeHealthScore({ online: online.has(a.uuid), rec: records[a.uuid] }) / 10);
-          if (sb !== sa) return sb - sa;
-        }
-        return Number(online.has(b.uuid)) - Number(online.has(a.uuid));
-      });
-  }, [nodes, query, activeCat, online, customGroups, sortMode, records]);
+  const ordered = applyFilter(nodes, query, activeCat, online, customGroups)
+    .slice()
+    .sort((a, b) => {
+      if (sortMode === 1) {
+        const sb = Math.floor(nodeHealthScore({ online: online.has(b.uuid), rec: records[b.uuid] }) / 10);
+        const sa = Math.floor(nodeHealthScore({ online: online.has(a.uuid), rec: records[a.uuid] }) / 10);
+        if (sb !== sa) return sb - sa;
+      }
+      return Number(online.has(b.uuid)) - Number(online.has(a.uuid));
+    });
+
+  async function openServices() {
+    const mod = await import("./services");
+    const ServicesView = mod.View;
+    await Navigation.present({
+      element: <ServicesView />,
+    });
+  }
+
+  async function openGroups() {
+    const mod = await import("./groups");
+    const GroupsView = mod.View;
+    await Navigation.present({
+      element: <GroupsView />,
+    });
+  }
+
+  async function openSettings() {
+    const mod = await import("./settings");
+    const SettingsView = mod.View;
+    await Navigation.present({
+      element: <SettingsView />,
+    });
+  }
 
   return (
     <NavigationStack>
@@ -119,31 +124,19 @@ export function View({
                 ...(showServices
                   ? [
                       <Button
-                        action={() => servicesPresented.setValue(true)}
-                        sheet={{
-                          isPresented: servicesPresented,
-                          content: <ServicesView presentationDetents={contentDetents()} />,
-                        }}
+                        action={openServices}
                       >
                         <Image systemName={"checkmark.shield"} />
                       </Button>,
                     ]
                   : []),
                 <Button
-                  action={() => groupsPresented.setValue(true)}
-                  sheet={{
-                    isPresented: groupsPresented,
-                    content: <GroupsView presentationDetents={contentDetents()} />,
-                  }}
+                  action={openGroups}
                 >
                   <Image systemName={"folder.badge.gearshape"} />
                 </Button>,
                 <Button
-                  action={() => settingsPresented.setValue(true)}
-                  sheet={{
-                    isPresented: settingsPresented,
-                    content: <SettingsView presentationDetents={contentDetents()} />,
-                  }}
+                  action={openSettings}
                 >
                   <Image systemName={"gearshape"} />
                 </Button>,
@@ -151,7 +144,7 @@ export function View({
         }}
       >
         {monitor.instance.value == null ? (
-          <EmptyState onConfigure={() => settingsPresented.setValue(true)} />
+          <EmptyState onConfigure={openSettings} />
         ) : monitor.error.value && nodes.length === 0 ? (
           <Text foregroundStyle={"systemRed"}>{monitor.error.value}</Text>
         ) : (
@@ -293,10 +286,17 @@ function EmptyState({ onConfigure }: { onConfigure: () => void }) {
 
 function NodeRow({ uuid }: { uuid: string }) {
   const monitor = useMonitor();
-  const detailPresented = useObservable<boolean>(false);
 
   const node = monitor.nodeIndex.value[uuid];
   if (!node) return <></>;
+
+  async function openDetail() {
+    const mod = await import("./detail");
+    const DetailView = mod.View;
+    await Navigation.present({
+      element: <DetailView uuid={uuid} />,
+    });
+  }
 
   const isOnline = monitor.online.value.has(uuid);
   const rec = monitor.records.value[uuid];
@@ -310,11 +310,7 @@ function NodeRow({ uuid }: { uuid: string }) {
     <Button
       listRowSeparator={"hidden"}
       listRowInsets={{ top: 6, bottom: 6, leading: 16, trailing: 16 }}
-      action={() => detailPresented.setValue(true)}
-      sheet={{
-        isPresented: detailPresented,
-        content: <DetailView uuid={uuid} presentationDetents={contentDetents()} />,
-      }}
+      action={openDetail}
       contextMenu={{
         menuItems: (
           <Group>
@@ -341,10 +337,8 @@ function NodeRow({ uuid }: { uuid: string }) {
         spacing={10}
         padding={14}
         frame={{ maxWidth: "infinity", alignment: "leading" }}
-        glassEffect={safeGlassEffect(20)}
         background={"secondarySystemGroupedBackground"}
         clipShape={{ type: "rect", cornerRadius: 20 }}
-        shadow={{ color: "rgba(0,0,0,0.12)", radius: 8, x: 0, y: 3 }}
       >
         <HStack spacing={9}>
           <VStack
@@ -546,15 +540,6 @@ function Sparkline({
 
 function idleSparkValue(index: number): number {
   return 0.065 + ((index * 7) % 5) * 0.008;
-}
-
-function safeGlassEffect(cornerRadius: number): any {
-  try {
-    if (typeof UIGlass === "undefined") return undefined;
-    return { glass: UIGlass.regular(), shape: { type: "rect", cornerRadius } };
-  } catch {
-    return undefined;
-  }
 }
 
 function loadColor(r: number): string {

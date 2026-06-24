@@ -29,10 +29,6 @@ import {
 } from "../class/config";
 import { getBackend, ALL_BACKENDS } from "../class/server";
 import { useMonitor } from "../context/Monitor";
-import { View as NodeManagerView } from "./addnode";
-import { View as AdminHubView } from "./admin";
-import { View as DiagnosticsView } from "./diagnostics";
-import { View as LocalAlertsView } from "./local_alerts";
 import type { Instance, AuthMode, AuthConfig, BackendKind } from "../class/types";
 
 export function View() {
@@ -61,19 +57,27 @@ export function View() {
   async function openNodeManager(inst: Instance) {
     setActiveInstance(inst.id);
     await monitor.reload();
+    const mod = await import("./addnode");
+    const NodeManagerView = mod.View;
     await Navigation.present({ element: <NodeManagerView /> });
     await afterChange();
   }
 
   async function openAdmin(inst: Instance) {
+    const mod = await import("./admin");
+    const AdminHubView = mod.View;
     await Navigation.present({ element: <AdminHubView /> });
   }
 
   async function openDiagnostics(inst: Instance) {
+    const mod = await import("./diagnostics");
+    const DiagnosticsView = mod.View;
     await Navigation.present({ element: <DiagnosticsView instance={inst} /> });
   }
 
   async function openLocalAlerts() {
+    const mod = await import("./local_alerts");
+    const LocalAlertsView = mod.View;
     await Navigation.present({ element: <LocalAlertsView /> });
   }
 
